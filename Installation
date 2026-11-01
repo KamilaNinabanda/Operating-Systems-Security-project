@@ -15,9 +15,9 @@ LOG_DIR=/var/log/falco-guard
 log() { echo -e "\n>>> $*"; }
 fail() { echo "ERROR: $*" >&2; exit 1; }
 
-[ "$(id -u)" -eq 0 ] || fail "Ejecuta este script con sudo."
+[ "$(id -u)" -eq 0 ] || fail "Run this script with sudo."
 
-log "Paso 1/7: Instalando Docker Engine desde el repositorio oficial"
+log "Step 1/7: Installing Docker Engine from the official repository"
 if ! command -v docker >/dev/null; then
   for pkg in docker.io docker-doc docker-compose docker-compose-v2 podman-docker containerd runc; do
     apt-get remove -y "$pkg" >/dev/null 2>&1 || true
@@ -32,14 +32,14 @@ if ! command -v docker >/dev/null; then
   apt-get update -y
   apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
 else
-  log "Docker ya está instalado, se omite."
+  log "Docker is already installed; skipping."
 fi
 systemctl enable --now docker
 
 REAL_USER="${SUDO_USER:-$USER}"
 usermod -aG docker "$REAL_USER" || true
 
-log "Paso 2/7: Instalando Falco (driver modern_ebpf)"
+log "Step 2/7: Installing Falco (driver modern_ebpf)"
 if ! command -v falco >/dev/null; then
   curl -fsSL https://falco.org/repo/falcosecurity-packages.asc | gpg --dearmor -o /usr/share/keyrings/falco-archive-keyring.gpg
   echo "deb [signed-by=/usr/share/keyrings/falco-archive-keyring.gpg] https://download.falco.org/packages/deb stable main" \
@@ -48,10 +48,10 @@ if ! command -v falco >/dev/null; then
   apt-get install -y dkms make "linux-headers-$(uname -r)" dialog || true
   FALCO_DRIVER_CHOICE=modern_ebpf FALCO_FRONTEND=noninteractive apt-get install -y falco
 else
-  log "Falco ya está instalado, se omite."
+  log "Falco is already installed; it is omitted."
 fi
 
-log "Paso 3/7: Configurando falco.yaml (http_output, rule_matching, rules.d)"
+log "Step 3/7: Configuring falco.yaml (http_output, rule_matching, rules.d)"
 cp -n /etc/falco/falco.yaml /etc/falco/falco.yaml.orig || true
 python3 - "$1" << 'PYEOF'
 import re, sys
@@ -79,7 +79,7 @@ else:
 open(path, "w").write(text)
 PYEOF
 
-log "Paso 4/7: Escribiendo las reglas personalizadas"
+log "Paso 4/7: Writing custom rules"
 mkdir -p /etc/falco/rules.d
 cat > /etc/falco/rules.d/host_access.yaml << 'RULES_EOF'
 - list: sensitive_basenames
@@ -87,9 +87,9 @@ cat > /etc/falco/rules.d/host_access.yaml << 'RULES_EOF'
 
 - rule: Container opens candidate sensitive file
   desc: >
-    Candidato: un contenedor abre un archivo con nombre sensible.
-    La confirmacion final (es del host o del contenedor) la hace
-    el servicio Python correlacionando con los montajes.
+    Candidate: a container opens a file with a sensitive name.
+    The final confirmation (whether from the host or the container) is performed by
+    the Python service correlating with the mounts.
   condition: >
     evt.type in (open, openat, openat2) and evt.is_open_read=true
     and container.id != host
@@ -98,14 +98,14 @@ cat > /etc/falco/rules.d/host_access.yaml << 'RULES_EOF'
          or fd.name contains "/etc/kubernetes/"
          or fd.name contains "/var/lib/kubelet/")
   output: >
-    Candidato a acceso sensible (file=%fd.name cmd=%proc.cmdline
+    Candidate for sensitive access (file=%fd.name cmd=%proc.cmdline
     container_id=%container.id container=%container.name
     image=%container.image.repository user=%user.name)
   priority: NOTICE
   tags: [container, custom, host_file_candidate]
 
 - rule: Container touches Docker socket
-  desc: Acceso al socket de Docker desde un contenedor
+  desc: Accessing the Docker socket from a container
   condition: >
     evt.type in (open, openat, openat2, connect) and container.id != host
     and fd.name = /var/run/docker.sock
@@ -116,16 +116,16 @@ cat > /etc/falco/rules.d/host_access.yaml << 'RULES_EOF'
   tags: [container, host_escape, custom]
 RULES_EOF
 
-falco -V /etc/falco/rules.d/host_access.yaml || fail "La regla no pasó la validación"
+falco -V /etc/falco/rules.d/host_access.yaml || fail "The rule failed validation."
 
-log "Paso 5/7: Creando el usuario de servicio y el entorno Python"
+log "Step 5/7: Creating the service user and the Python environment"
 id -u falco-guard >/dev/null 2>&1 || useradd --system --home-dir "$GUARD_DIR" --shell /usr/sbin/nologin falco-guard
 mkdir -p "$GUARD_DIR" "$(dirname "$ENV_FILE")" "$LOG_DIR"
 python3 -m venv "$GUARD_DIR/venv"
 "$GUARD_DIR/venv/bin/pip" install --quiet fastapi uvicorn docker requests
 
-log "Paso 6/7: Escribiendo monitor.py y la configuración"
-# --- monitor.py se escribe con el contenido consolidado ya validado ---
+log "Step 6/7: Writing monitor.py and the configuration"
+# --- monitor.py it is written using the consolidated and already validated content ---
 cat > "$GUARD_DIR/monitor.py" << 'PYFILE_EOF'
 import hmac
 import json
@@ -155,7 +155,7 @@ IGNORE_LABEL = ("falco-guard.ignore", "true")
 ENFORCE_LABEL = ("falco-guard.enforce", "true")
 
 if len(TOKEN) < 16:
-    raise RuntimeError("GUARD_TOKEN no definido o demasiado corto (minimo 16 caracteres)")
+    raise RuntimeError("GUARD_TOKEN not defined or too short (minimum 16 characters)")
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger("falco-guard")
@@ -302,7 +302,7 @@ def falco_event(event: dict = Body(...), token: str = Query("")):
             return done("mount-not-sensitive")
 
         base["priority"] = "Critical"
-        notify(f"[Confirmado] {container.name} lee {host_path} del host (visto como {fd_name})")
+        notify(f"[Confirmado] {container.name} reads {host_path} from the host (visto como {fd_name})")
     else:
         notify(f"[Falco] {prio} | {rule} | {event.get('output')}")
         if not (prio in ISOLATE_PRIORITIES and (tags & ISOLATE_TAGS)):
@@ -326,19 +326,19 @@ def falco_event(event: dict = Body(...), token: str = Query("")):
             return done("alert-only-not-enforced")
 
         risky = inspect_risky_mounts(container)
-        notify(f"Mounts de riesgo en {container.name}: {risky or 'ninguno'}")
+        notify(f"Mounts de riesgo en {container.name}: {risky or 'none'}")
 
         if DRY_RUN:
             notify(f"[DRY_RUN] Se aislaria {container.name}")
             return done("dry-run")
 
         isolate(container)
-        notify(f"Contenedor {container.name} aislado")
+        notify(f"Contenedor {container.name} isolated")
         return done("isolated")
     except Exception as e:
-        log.exception("Error procesando %s", cid)
+        log.exception("Error while procesing %s", cid)
         audit(status="error", error=str(e), **base)
-        raise HTTPException(status_code=500, detail="error interno")
+        raise HTTPException(status_code=500, detail="internal error")
 
 
 FD_PATH = re.compile(r"/proc/(self|thread-self|\d+)/fd\b")
@@ -358,7 +358,7 @@ def handle_create(watch_client, ev):
     if not FD_PATH.search(workdir):
         return
 
-    base = {"rule": "WorkingDir apunta a /proc fd (CVE-2024-21626)", "priority": "Critical",
+    base = {"rule": "WorkingDir points to /proc fd (CVE-2024-21626)", "priority": "Critical",
             "container_id": c.short_id, "container": c.name, "file": workdir}
     notify(f"[Docker events] WorkingDir sospechoso en {c.name}: {workdir}")
 
@@ -366,12 +366,12 @@ def handle_create(watch_client, ev):
         audit(status="exempt", **base)
         return
     if DRY_RUN:
-        notify(f"[DRY_RUN] Se eliminaria {c.name} antes de arrancar")
+        notify(f"[DRY_RUN] {c.name} would be removed before booting")
         audit(status="dry-run", **base)
         return
     try:
         c.remove(force=True)
-        notify(f"Contenedor {c.name} eliminado antes de arrancar")
+        notify(f"container {c.name} removed before starting")
         audit(status="removed-before-start", **base)
     except docker.errors.APIError as e:
         log.error("No se pudo eliminar %s: %s", c.name, e)
@@ -382,18 +382,18 @@ def watch_docker_events():
     while True:
         try:
             watch_client = docker.from_env()
-            log.info("Vigilando eventos de creacion de contenedores")
+            log.info("Monitoring container creation events")
             for ev in watch_client.events(decode=True, filters={"type": "container", "event": "create"}):
                 try:
                     handle_create(watch_client, ev)
                 except Exception:
-                    log.exception("Error procesando evento")
+                    log.exception("Error processing event")
         except Exception:
-            log.exception("Vigilancia de eventos caida; reintento en 5 s")
+            log.exception("Monitoring for fall events; retry in 5 seconds")
             time.sleep(5)
 PYFILE_EOF
 
-"$GUARD_DIR/venv/bin/python" -m py_compile "$GUARD_DIR/monitor.py" || fail "monitor.py no compila"
+"$GUARD_DIR/venv/bin/python" -m py_compile "$GUARD_DIR/monitor.py" || fail "monitor.py does not compile"
 
 cat > "$ENV_FILE" << EOF
 GUARD_TOKEN=$1
@@ -407,7 +407,7 @@ chmod -R g+rX,o-rwx "$GUARD_DIR"
 
 cat > /etc/systemd/system/falco-guard.service << 'UNIT_EOF'
 [Unit]
-Description=Falco Guard - respuesta automatica a alertas de contenedores
+Description=Falco Guard - automated response to container alerts
 After=docker.service falco-modern-bpf.service
 Requires=docker.service
 
@@ -438,17 +438,17 @@ systemctl daemon-reload
 systemctl enable --now falco-guard
 systemctl restart falco-modern-bpf
 
-log "Paso 7/7: Verificación"
+log "Step 7/7: Verification"
 sleep 5
 systemctl is-active docker falco-modern-bpf falco-guard
 curl -s http://127.0.0.1:8080/health; echo
 
 echo
 echo "=============================================="
-echo " Instalación terminada."
-echo " Token guardado en: $ENV_FILE"
-echo " Cierra sesión y vuelve a entrar para usar Docker sin sudo."
-echo " Prueba con: sudo python3 $GUARD_DIR/run_tests.py (cópialo aparte)"
+echo " Installation complete."
+echo " Token saved in: $ENV_FILE"
+echo " Log out and log back in to use Docker without sudo."
+echo " Test with: sudo python3 $GUARD_DIR/run_tests.py (cópialo aparte)"
 echo "=============================================="
 SCRIPT_EOF
 chmod +x ~/setup-falco-guard.sh
