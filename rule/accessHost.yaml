@@ -1,0 +1,46 @@
+mkdir -p ~/falco-guard-repo/rules
+cat > ~/falco-guard-repo/rules/host_access.yaml << 'EOF'
+# Custom falco-guard rules.
+# These require `rule_matching: all` in `falco.yaml` (see `install/falco.yaml.snippet`);
+# otherwise, default Falco rules might take precedence over these for the same event.
+
+- list: sensitive_basenames
+items: [shadow, gshadow, sudoers]
+
+- rule: Container opens candidate sensitive file
+desc: >
+Candidate: a container opens a file with a sensitive name. 
+Falco cannot determine whether the path belongs to the host or the container itself; 
+this is verified by the Python service (`monitor.py`) by correlating
+`fd.name` with the container's actual bind mounts. For this reason, this rule
+uses the `NOTICE` priority and does not include the `host_escape` tag—it should not
+trigger immediate isolation, but rather identify a candidate for review. 
+condition: >
+evt.type in (open, openat, openat2) and evt.is_open_read=true
+and container.id != host
+and (fd.filename in (sensitive_basenames)
+or fd.name contains "/.ssh/"
+or fd.name contains "/etc/kubernetes/"
+or fd.name contains "/var/lib/kubelet/")
+output: >
+Sensitive access candidate (file=%fd.name cmd=%proc.cmdline
+container_id=%container.id container=%container.name
+image=%container.image.repository user=%user.name)
+priority: NOTICE
+tags: [container, custom, host_file_candidate]
+
+- rule: Container touches Docker socket
+desc: >
+A container accesses the Docker socket. This is almost always equivalent to
+root privileges on the host, so this rule triggers an immediate alert
+(priority: CRITICAL + tag: host_escape), bypassing the mount-based
+correlation logic. 
+condition: >
+evt.type in (open, openat, openat2, connect) and container.id != host
+and fd.name = /var/run/docker.sock
+output: >
+Docker socket accessed (cmd=%proc.cmdline container_id=%container.id
+container=%container.name image=%container.image.repository)
+priority: CRITICAL
+tags: [container, host_escape, custom]
+EOF
