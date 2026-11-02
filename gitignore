@@ -1,0 +1,10 @@
+cat > ~/falco-guard-repo/.gitignore << 'EOF'
+*.env
+env
+*.log
+*.bak
+*.bak2
+__pycache__/
+*.pyc
+venv/
+EOF
