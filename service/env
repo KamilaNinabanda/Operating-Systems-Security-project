@@ -1,0 +1,28 @@
+mkdir -p ~/falco-guard-repo/service
+cat > ~/falco-guard-repo/service/env.example << 'EOF'
+# Copia este archivo a /etc/falco-guard/env y ajusta los valores.
+# El script install/setup-falco-guard.sh ya genera este archivo
+# automáticamente con un token aleatorio; esta plantilla es de
+# referencia o para una instalación manual.
+
+# Token compartido entre Falco y el servicio. Mínimo 16 caracteres.
+# Generarlo con: openssl rand -hex 24
+GUARD_TOKEN=CAMBIAR_POR_UN_TOKEN_DE_AL_MENOS_16_CARACTERES
+
+# true = solo detecta y registra, no aísla nada (modo seguro, usar primero)
+# false = aísla automáticamente los contenedores sospechosos
+DRY_RUN=true
+
+# all   = aplica el aislamiento a cualquier contenedor
+# label = aísla solo los contenedores con la etiqueta falco-guard.enforce=true
+ENFORCE_MODE=all
+
+# Segundos de espera antes de volver a actuar sobre el mismo contenedor
+COOLDOWN=300
+
+# Opcional: URL de un webhook de Slack para recibir notificaciones
+#SLACK_WEBHOOK=https://hooks.slack.com/services/XXX/YYY/ZZZ
+
+# Carpeta del log de auditoría (JSON, una línea por decisión)
+LOG_DIR=/var/log/falco-guard
+EOF
