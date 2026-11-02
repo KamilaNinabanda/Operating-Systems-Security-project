@@ -1,28 +1,28 @@
 mkdir -p ~/falco-guard-repo/service
 cat > ~/falco-guard-repo/service/env.example << 'EOF'
-# Copia este archivo a /etc/falco-guard/env y ajusta los valores.
-# El script install/setup-falco-guard.sh ya genera este archivo
-# automáticamente con un token aleatorio; esta plantilla es de
-# referencia o para una instalación manual.
+# Copy this file to /etc/falco-guard/env and adjust the values.
+# The install/setup-falco-guard.sh script automatically generates this file
+# with a random token; this template is provided for reference
+# or for manual installation.
 
-# Token compartido entre Falco y el servicio. Mínimo 16 caracteres.
-# Generarlo con: openssl rand -hex 24
-GUARD_TOKEN=CAMBIAR_POR_UN_TOKEN_DE_AL_MENOS_16_CARACTERES
+# Shared token between Falco and the service. Minimum 16 characters.
+# Generate it using: openssl rand -hex 24
+GUARD_TOKEN=REPLACE_WITH_A_TOKEN_OF_AT_LEAST_16_CHARACTERS
 
-# true = solo detecta y registra, no aísla nada (modo seguro, usar primero)
-# false = aísla automáticamente los contenedores sospechosos
+# true = detect and log only; no isolation (safe mode, use this first)
+# false = automatically isolate suspicious containers
 DRY_RUN=true
 
-# all   = aplica el aislamiento a cualquier contenedor
-# label = aísla solo los contenedores con la etiqueta falco-guard.enforce=true
+# all   = apply isolation to any container
+# label = isolate only containers with the label falco-guard.enforce=true
 ENFORCE_MODE=all
 
-# Segundos de espera antes de volver a actuar sobre el mismo contenedor
+# Seconds to wait before taking action on the same container again
 COOLDOWN=300
 
-# Opcional: URL de un webhook de Slack para recibir notificaciones
+# Optional: Slack webhook URL for receiving notifications
 #SLACK_WEBHOOK=https://hooks.slack.com/services/XXX/YYY/ZZZ
 
-# Carpeta del log de auditoría (JSON, una línea por decisión)
+# Audit log directory (JSON, one entry per line)
 LOG_DIR=/var/log/falco-guard
 EOF
