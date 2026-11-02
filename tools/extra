@@ -1,0 +1,3 @@
+chmod +x ~/falco-guard-repo/tools/*.py
+python3 -m py_compile ~/falco-guard-repo/tools/check_versions.py && echo "check_versions.py OK"
+python3 -m py_compile ~/falco-guard-repo/tools/scan_workdir.py && echo "scan_workdir.py OK"
