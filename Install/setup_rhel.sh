@@ -93,7 +93,11 @@ else
   log "Falco is already installed, will be ommited."
 fi
 
-log "Step 3 out of 7: Configuring falco.yaml (http_output, rule_matching, rules.d)"
+# ============================================================
+# Step 1: Docker Engine
+# ============================================================
+
+log "Configuring falco.yaml (http_output, rule_matching, rules.d)"
 cp -n /etc/falco/falco.yaml /etc/falco/falco.yaml.orig || true
 python3 - "$1" << 'PYEOF'
 import re, sys
@@ -120,8 +124,11 @@ else:
 
 open(path, "w").write(text)
 PYEOF
+# ============================================================
+# Step 4
+# ============================================================
 
-log "Step 4 out of 7: Custom rules"
+log "Custom rules"
 mkdir -p /etc/falco/rules.d
 cat > /etc/falco/rules.d/host_access.yaml << 'RULES_EOF'
 - list: sensitive_basenames
@@ -159,14 +166,20 @@ cat > /etc/falco/rules.d/host_access.yaml << 'RULES_EOF'
 RULES_EOF
 
 falco -V /etc/falco/rules.d/host_access.yaml || fail "The rule failed validation."
-
-log "Step 5 out of 7: Creating the service user and the Python environment"
+# ============================================================
+# Step 5
+# ============================================================
+log "Creating the service user and the Python environment"
 id -u falco-guard >/dev/null 2>&1 || useradd --system --home-dir "$GUARD_DIR" --shell /usr/sbin/nologin falco-guard
 mkdir -p "$GUARD_DIR" "$(dirname "$ENV_FILE")" "$LOG_DIR"
 python3 -m venv "$GUARD_DIR/venv"
 "$GUARD_DIR/venv/bin/pip" install --quiet fastapi uvicorn docker requests
 
-log "Step 6 out of 7: Writing monitor.py and the configuration"
+# ============================================================
+# Step 6
+# ============================================================
+
+log "Writing monitor.py and the configuration"
 # --- monitor.py it is written using the consolidated and already validated content ---
 cat > "$GUARD_DIR/monitor.py" << 'PYFILE_EOF'
 import hmac
@@ -479,8 +492,10 @@ UNIT_EOF
 systemctl daemon-reload
 systemctl enable --now falco-guard
 systemctl restart falco-modern-bpf
-
-log "Step 7 out of 7: Verification"
+# ============================================================
+# Step 7
+# ============================================================
+log "Step 7 Verification"
 sleep 5
 systemctl is-active docker falco-modern-bpf falco-guard
 curl -s http://127.0.0.1:8080/health; echo
