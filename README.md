@@ -30,7 +30,7 @@ tools/check_versions.py        Version inventory (runc/containerd/docker)
 tools/scan_workdir.py          Scanner for WORKDIR /proc/.../fd
 
 ## Installation
-
+Installation for Debian/Ubuntu distribution
 Linux VM (tested on Ubuntu 22.04/24.04/26.04, kernel >= 5.8)
 dedicated to this lab environment, isolated from real networks and data. 
 
