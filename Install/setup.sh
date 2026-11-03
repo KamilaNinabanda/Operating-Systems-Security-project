@@ -17,7 +17,7 @@ fail() { echo "ERROR: $*" >&2; exit 1; }
 
 [ "$(id -u)" -eq 0 ] || fail "Run this script with sudo."
 
-log "Step 1/7: Installing Docker Engine from the official repository"
+log "Step 1 out of 7: Installing Docker Engine from the official repository"
 if ! command -v docker >/dev/null; then
   for pkg in docker.io docker-doc docker-compose docker-compose-v2 podman-docker containerd runc; do
     apt-get remove -y "$pkg" >/dev/null 2>&1 || true
@@ -32,14 +32,14 @@ if ! command -v docker >/dev/null; then
   apt-get update -y
   apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
 else
-  log "Docker is already installed; skipping."
+  log "Docker is already installed; skip."
 fi
 systemctl enable --now docker
 
 REAL_USER="${SUDO_USER:-$USER}"
 usermod -aG docker "$REAL_USER" || true
 
-log "Step 2/7: Installing Falco (driver modern_ebpf)"
+log "Step 2 out of 7: Installation of Falco (driver modern_ebpf)"
 if ! command -v falco >/dev/null; then
   curl -fsSL https://falco.org/repo/falcosecurity-packages.asc | gpg --dearmor -o /usr/share/keyrings/falco-archive-keyring.gpg
   echo "deb [signed-by=/usr/share/keyrings/falco-archive-keyring.gpg] https://download.falco.org/packages/deb stable main" \
@@ -48,10 +48,10 @@ if ! command -v falco >/dev/null; then
   apt-get install -y dkms make "linux-headers-$(uname -r)" dialog || true
   FALCO_DRIVER_CHOICE=modern_ebpf FALCO_FRONTEND=noninteractive apt-get install -y falco
 else
-  log "Falco is already installed; it is omitted."
+  log "Falco is already installed. Will be omitted."
 fi
 
-log "Step 3/7: Configuring falco.yaml (http_output, rule_matching, rules.d)"
+log "Step 3 out of 7: Configuring falco.yaml (http_output, rule_matching, rules.d)"
 cp -n /etc/falco/falco.yaml /etc/falco/falco.yaml.orig || true
 python3 - "$1" << 'PYEOF'
 import re, sys
@@ -79,7 +79,7 @@ else:
 open(path, "w").write(text)
 PYEOF
 
-log "Paso 4/7: Writing custom rules"
+log "Step 4 out of 7: Custom rules"
 mkdir -p /etc/falco/rules.d
 cat > /etc/falco/rules.d/host_access.yaml << 'RULES_EOF'
 - list: sensitive_basenames
@@ -110,7 +110,7 @@ cat > /etc/falco/rules.d/host_access.yaml << 'RULES_EOF'
     evt.type in (open, openat, openat2, connect) and container.id != host
     and fd.name = /var/run/docker.sock
   output: >
-    Docker socket usado (cmd=%proc.cmdline container_id=%container.id
+    Docker socket is using (cmd=%proc.cmdline container_id=%container.id
     container=%container.name image=%container.image.repository)
   priority: CRITICAL
   tags: [container, host_escape, custom]
@@ -118,13 +118,13 @@ RULES_EOF
 
 falco -V /etc/falco/rules.d/host_access.yaml || fail "The rule failed validation."
 
-log "Step 5/7: Creating the service user and the Python environment"
+log "Step 5 out of 7: Creating the service user and the Python environment"
 id -u falco-guard >/dev/null 2>&1 || useradd --system --home-dir "$GUARD_DIR" --shell /usr/sbin/nologin falco-guard
 mkdir -p "$GUARD_DIR" "$(dirname "$ENV_FILE")" "$LOG_DIR"
 python3 -m venv "$GUARD_DIR/venv"
 "$GUARD_DIR/venv/bin/pip" install --quiet fastapi uvicorn docker requests
 
-log "Step 6/7: Writing monitor.py and the configuration"
+log "Step 6 out of 7: Writing monitor.py and the configuration"
 # --- monitor.py it is written using the consolidated and already validated content ---
 cat > "$GUARD_DIR/monitor.py" << 'PYFILE_EOF'
 import hmac
@@ -205,12 +205,12 @@ def inspect_risky_mounts(container) -> list[str]:
 
 def isolate(container):
     container.reload()
-    log.info("Aislando %s (%s)", container.name, container.short_id)
+    log.info("Isolating %s (%s)", container.name, container.short_id)
     for net_name in list(container.attrs["NetworkSettings"]["Networks"].keys()):
         try:
             client.networks.get(net_name).disconnect(container, force=True)
         except docker.errors.APIError as e:
-            log.error("No se pudo desconectar de %s: %s", net_name, e)
+            log.error("Couldn't connect from %s: %s", net_name, e)
     container.pause()
     try:
         container.commit(repository="quarantine", tag=f"{container.short_id}-{int(time.time())}")
@@ -268,7 +268,7 @@ def health():
 @app.post("/falco")
 def falco_event(event: dict = Body(...), token: str = Query("")):
     if not hmac.compare_digest(token.encode(), TOKEN.encode()):
-        raise HTTPException(status_code=401, detail="token invalido")
+        raise HTTPException(status_code=401, detail="invalid token")
 
     fields = event.get("output_fields", {})
     cid = fields.get("container.id")
@@ -302,7 +302,7 @@ def falco_event(event: dict = Body(...), token: str = Query("")):
             return done("mount-not-sensitive")
 
         base["priority"] = "Critical"
-        notify(f"[Confirmado] {container.name} reads {host_path} from the host (visto como {fd_name})")
+        notify(f"[Confirmed] {container.name} reads {host_path} from the host (seen as {fd_name})")
     else:
         notify(f"[Falco] {prio} | {rule} | {event.get('output')}")
         if not (prio in ISOLATE_PRIORITIES and (tags & ISOLATE_TAGS)):
@@ -329,11 +329,11 @@ def falco_event(event: dict = Body(...), token: str = Query("")):
         notify(f"Mounts de riesgo en {container.name}: {risky or 'none'}")
 
         if DRY_RUN:
-            notify(f"[DRY_RUN] Se aislaria {container.name}")
+            notify(f"[DRY_RUN] will isolate.. {container.name}")
             return done("dry-run")
 
         isolate(container)
-        notify(f"Contenedor {container.name} isolated")
+        notify(f"Container {container.name} isolated")
         return done("isolated")
     except Exception as e:
         log.exception("Error while procesing %s", cid)
@@ -438,7 +438,7 @@ systemctl daemon-reload
 systemctl enable --now falco-guard
 systemctl restart falco-modern-bpf
 
-log "Step 7/7: Verification"
+log "Step 7 out of 7: Verification"
 sleep 5
 systemctl is-active docker falco-modern-bpf falco-guard
 curl -s http://127.0.0.1:8080/health; echo
@@ -448,7 +448,7 @@ echo "=============================================="
 echo " Installation complete."
 echo " Token saved in: $ENV_FILE"
 echo " Log out and log back in to use Docker without sudo."
-echo " Test with: sudo python3 $GUARD_DIR/run_tests.py (cópialo aparte)"
+echo " Test with: sudo python3 $GUARD_DIR/run_tests.py"
 echo "=============================================="
 SCRIPT_EOF
 chmod +x ~/setup-falco-guard.sh
