@@ -1,8 +1,5 @@
 mkdir -p ~/falco-guard-repo/rules
 cat > ~/falco-guard-repo/rules/host_access.yaml << 'EOF'
-# Custom falco-guard rules.
-# These require `rule_matching: all` in `falco.yaml` (see `install/falco.yaml.snippet`);
-# otherwise, default Falco rules might take precedence over these for the same event.
 
 - list: sensitive_basenames
 items: [shadow, gshadow, sudoers]
