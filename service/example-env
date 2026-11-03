@@ -1,0 +1,22 @@
+# Copy this file to /etc/falco-guard/env adjust the values.
+# The script install/setup-falco-guard.sh already generates this file
+# with a random token; only mean to manual installation or as a reference 
+
+# Share token between FALCO and the service Minimum 16 char.
+# Generated through: openssl rand -hex 24
+GUARD_TOKEN=UPDATE_WITH_YOUR_OWN_TOKEN_16C
+
+# true = just detects and registers, does not isolate (test first)
+# false = isolate automatically the suspicious containers
+DRY_RUN=true
+
+# all   = apply the isolation to any container 
+# label = isolate only the containers with a falco-giard.enforce= true tag
+ENFORCE_MODE=all
+
+# Time waits before it acts over the container 
+COOLDOWN=300
+
+
+# Log file for audit
+LOG_DIR=/var/log/falco-guard
