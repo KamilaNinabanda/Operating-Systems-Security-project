@@ -1,27 +1,24 @@
-mkdir -p ~/falco-guard-repo/install
-cat > ~/falco-guard-repo/install/falco.yaml.snippet << 'EOF'
-# Reference snippet for /etc/falco/falco.yaml
-# The install/setup-falco-guard.sh script automatically applies these
-# changes to the existing falco.yaml; reference only
+# Reference fragment for /etc/falco/falco.yaml
+# install/setup-falco-guard.sh apply this changes
+# automatically over falco.yaml already installed
+# only for reference.
 
 json_output: true
 json_include_output_property: true
 
-# project (see the "Testing" section in the README).
+# Needed: without this only the first rule will be apply
 rule_matching: all
 
 http_output:
-enabled: true
-# REPLACE_WITH_YOUR_TOKEN with the value of GUARD_TOKEN
-# defined in /etc/falco-guard/env. The token is only secure here
-# because the service listens exclusively on 127.0.0.1. 
-url: "http://127.0.0.1:8080/falco?token=REPLACE_WITH_YOUR_TOKEN"
+  enabled: true
+  # Where UPDATE_TOKEN_16C you type for the value of GUARD_TOKEN
+  # defined in /etc/falco-guard/env. The token will only be safe in there 
+  # because the service only listens in 127.0.0.1.
+  url: "http://127.0.0.1:8080/falco?token=REEMPLAZAR_CON_TU_TOKEN"
 
-# Ensure that this path is included in rules_files, alongside
-# Falco's default rules:
+# Confirm that the route appears in rules_files, along with the default rules of FALCO
 #
 # rules_files:
 #   - /etc/falco/falco_rules.yaml
 #   - /etc/falco/falco_rules.local.yaml
 #   - /etc/falco/rules.d
-EOF
