@@ -1,13 +1,13 @@
 cat > ~/falco-guard-repo/README.md << 'EOF'
-# falco-guard
+# Monitor with FALCO
 
-A container monitoring tool using Falco (eBPF) and Python. It detects
+A  monitoring tool using Falco and Python. It detects
 suspicious activity—such as unexpected access to the host filesystem—generates
 alerts, and automatically isolates the responsible container.
 
 ## Architecture
 
-Containers --syscalls--> Falco (modern_ebpf) --rules--> JSON alert
+Containers --syscalls--> Falco --rules--> JSON alert
 | HTTP (token)
 v
 Python Service (FastAPI, systemd)
@@ -16,7 +16,7 @@ Python Service (FastAPI, systemd)
 - Isolates: cuts network access, pauses the container, and saves a forensic image
 
 Additionally, a thread listens for Docker creation events and inspects the
-working directory (addressing the pattern seen in CVE-2024-21626; see the "Leaky Vessels" section).
+working directory (addressing the pattern seen in CVE-2024-21626  "Leaky Vessels").
 
 ## Repository Structure
 
@@ -31,7 +31,7 @@ tools/scan_workdir.py          Scanner for WORKDIR /proc/.../fd
 
 ## Installation
 
-Requires a Linux VM (tested on Ubuntu 22.04/24.04/26.04, kernel >= 5.8)
+Linux VM (tested on Ubuntu 22.04/24.04/26.04, kernel >= 5.8)
 dedicated to this lab environment, isolated from real networks and data. 
 
 git clone <repo-url> falco-guard
@@ -50,7 +50,7 @@ curl -s http://127.0.0.1:8080/health
 
 It should return: `{"status":"ok","dry_run":true,"mode":"all"}`.
 
-## Decision Logic
+## How it works
 
 1. Falco flags a potential threat when a container accesses files with sensitive
 names (e.g., `shadow`, `sudoers`, SSH keys, etc.), regardless of where they are mounted.
@@ -61,9 +61,9 @@ is non-sensitive (`mount-not-sensitive`), or the host path is sensitive (trigger
 4. Rules tagged with `host_escape` and marked as critical priority (such as accessing
 the Docker socket) trigger immediate isolation, bypassing the correlation step.
 
-## Isolation
+## What the Isolation stands for
 
-Isolation involves disconnecting all networks, pausing the container, and saving its
+It disconnects all networks, pause the container, and save its
 filesystem as a "quarantine" image for forensic analysis. This does not include the
 contents of host-mounted volumes.
 
@@ -99,14 +99,5 @@ and containerd 2.4.2. Results in active isolation mode: 7/7 scenarios handled co
 and `/etc` mounted—; correctly ignored internal files and benign paths;
 respected exempted containers; no alerts for legitimate containers).
 
-False-positive assessment: 0 alerts observed while running Nginx, Redis, and Postgres
-for several minutes. One container that mounted the Docker socket triggered 1
-expected alert, which was resolved by applying the exemption label. ## Operation
-
-sudo tail -f /var/log/falco-guard/audit.log     view live audit logs
-curl -s http://127.0.0.1:8080/health             service status
-systemctl status falco-guard falco-modern-bpf docker
-
-## Leaky Vessels (CVE-2024-21626) — supplementary layer, not the primary focus
-
-This tool was not originally designed for this vulnerability
+## Leaky Vessels (CVE-2024-21626)
+Not designed for this vulnerability
