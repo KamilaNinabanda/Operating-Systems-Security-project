@@ -1,0 +1,7 @@
+engine:
+  kind: modern_ebpf
+
+http_output:
+  enabled: true
+  url: "http://127.0.0.1:5000/webhook/falco"
+  include_output_property: true
