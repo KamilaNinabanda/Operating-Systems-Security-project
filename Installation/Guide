@@ -1,0 +1,49 @@
+-----------------------------------------------------
+Installation of Docker
+-----------------------------------------
+sudo apt update && sudo apt install -y python3-pip python3-venv curl apt-transport-https ca-certificates gnupg
+sudo apt install -y docker.io
+sudo systemctl enable --now docker
+sudo usermod -aG docker $USER
+-------------------------------------
+Falco installation with  Modern eBPF
+------------------------------------
+curl -fsSL https://falco.org/repo/falcosecurity-packages.asc | sudo gpg --dearmor -o /usr/share/keyrings/falco-archive-keyring.gpg
+
+echo "deb [signed-by=/usr/share/keyrings/falco-archive-keyring.gpg] https://download.falco.org/packages/deb stable main" | sudo tee /etc/apt/sources.list.d/falcosecurity.list
+
+sudo apt update
+sudo apt install -y dialog falco
+---------------------------------------
+Configuring security rules with Falco
+---------------------------------------------------------
+sudo nano /etc/falco/falco_rules.local.yaml
+
+------------------------------------------
+Enable the Webhook HTTP in Falco
+---------------------------------------------
+sudo nano /etc/falco/falco.yaml
+
+sudo systemctl restart falco-modern-bpf.service
+
+---------------------------------------------------------
+Create and configure Python the python environment
+---------------------------------------------------
+
+mkdir -m 755 ~/falco-responder && cd ~/falco-responder
+python3 -m venv venv
+source venv/bin/activate
+
+nano requirements.txt
+
+pip install -r requirements.txt
+
+----------------------------------------------------------
+Create the response script (app.py)
+-------------------------------------------------------
+nano app.py
+
+--------------------------------------------------------
+Executes the Python server 
+------------------------------------------------------
+python3 app.py
