@@ -47,3 +47,13 @@ nano app.py
 Executes the Python server 
 ------------------------------------------------------
 python3 app.py
+
+
+#Reload the systemd daemons so that they detect the new file
+sudo systemctl daemon-reload
+
+# Enable the service for automatic system startup
+sudo systemctl enable falco-responder.service
+
+# Start the service right now
+sudo systemctl start falco-responder.service
