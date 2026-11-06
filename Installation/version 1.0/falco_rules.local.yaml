@@ -1,0 +1,9 @@
+- rule: Unexpected Host Filesystem Access from Container
+  desc: Detects containers attempting to access sensitive system files.
+  condition: >
+    evt.type in (open, openat) and
+    container and
+    (fd.name startswith /etc/passwd)
+  output: "Suspicious file access detected (user=%user.name command=%proc.cmdline file=%fd.name container_id=%container.id container_name=%container.name)"
+  priority: WARNING
+  tags: [filesystem, container_security]
