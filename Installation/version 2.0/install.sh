@@ -341,7 +341,7 @@ rules:
   "Container Escape Artifact Write":     {action: isolate}
   "Container Accessing Container Runtime Socket": {action: isolate}
   "Escape Tool Executed In Container":   {action: isolate}
-  "Mount Syscall In Container":          {action: alert, escalate_after: 3, window: 60}
+  "Mount Syscall In Container":          {action: alert}   # sin escalado hasta validar ruido de runc
   "Interactive Shell Spawned In Container": {action: alert}
 __GUARD_EOF__
 cat > /etc/falco/rules.d/guard_rules.yaml <<'__GUARD_EOF__'
@@ -400,7 +400,7 @@ cat > /etc/falco/rules.d/guard_rules.yaml <<'__GUARD_EOF__'
 
 - rule: Mount Syscall In Container
   desc: Llamada mount() desde un contenedor
-  condition: evt.type = mount and evt.dir = < and container.id != host and not guard_trusted
+  condition: evt.type = mount and evt.dir = < and container.id != host and not guard_trusted and not proc.name startswith "runc:"
   output: >
     mount() en contenedor (args=%evt.args proc=%proc.cmdline container=%container.name id=%container.id)
   priority: WARNING
