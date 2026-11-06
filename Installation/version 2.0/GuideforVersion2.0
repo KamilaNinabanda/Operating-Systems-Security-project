@@ -4,6 +4,7 @@
 Installation of Docker
 --------------------------------------------------------------------------------------------------------------------------
 sudo apt update && sudo apt install -y python3-pip python3-venv curl apt-transport-https ca-certificates gnupg
+sudo apt-get update && sudo apt-get install -y python3-docker python3-flask
 sudo apt install -y docker.io
 sudo systemctl enable --now docker
 sudo usermod -aG docker $USER
