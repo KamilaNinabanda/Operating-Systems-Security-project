@@ -24,6 +24,14 @@ if [[ $EUID -ne 0 ]]; then
    echo -e "${RED}[!] The script must be run as root (use sudo).${NC}"
    exit 1
 fi
+# With NEEDRESTART_MODE=a, Docker may restart, which in turn restarts any running containers.
+#This is to avoid some prompts regarding old versions and requesting restart for some services
+#-----------------------------------------
+export DEBIAN_FRONTEND=noninteractive
+export NEEDRESTART_MODE=a            # reinicia servicios sin preguntar (usa "l" para solo listarlos)
+export FALCO_FRONTEND=noninteractive # el paquete de Falco también muestra un diálogo
+export FALCO_DRIVER_CHOICE=modern_ebpf
+#-----------------------------------------
 
 # 1. Pre-flight Kernel & eBPF Compatibility Verification
 echo -e "${BLUE}[1/6] Checking Linux Kernel and modern eBPF BTF support...${NC}"
