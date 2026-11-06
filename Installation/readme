@@ -1,5 +1,0 @@
-Version 2.0
-///////////////////////////////////////////////////
-What does this version 
-///////////////////////////////////////////////////
-Complete version instead of locking only actions related to specific files it blocks any attemp of syscall to alter files like:
