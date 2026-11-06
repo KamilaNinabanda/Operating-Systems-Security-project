@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # ==============================================================================
-# falco-guard: instalador nativo (Falco modern eBPF + guardián Python en systemd)
-# Soportado: Ubuntu 22.04/24.04, Debian 12 (Python >= 3.10), kernel >= 5.8 con BTF
-# Uso: sudo bash install-falco-guard.sh [--enforce]
-#   (por defecto arranca en DRY_RUN: detecta y alerta pero NO aísla)
+# falco-guard: Installation (Falco modern eBPF + Python in systemd)
+# Supported platforms: Ubuntu 22.04/24.04, Debian 12 (Python >= 3.10), kernel >= 5.8 con BTF
+# Use: sudo bash install-falco-guard.sh [--enforce]
+#   (by default it runs in DRY_RUN: detects and alerts but does not isolate)
 # ==============================================================================
 set -euo pipefail
  
