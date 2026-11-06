@@ -21,3 +21,11 @@ Execution of the test (attack)
 ---------------------------------------------------------------------------------------------------------------------------
 sudo chmod +x ./testing.sh
 sudo ./testing.sh
+
+#===========================
+after applying the changes the following tasks should be perform 
+
+sudo reboot
+# al volver:
+systemctl is-active falco-modern-bpf falco-sentinel
+sudo journalctl -u falco-modern-bpf -n 20 --no-pager
