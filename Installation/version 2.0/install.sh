@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # ==============================================================================
-# Falco Sentinel - One-Click Automated Linux Installer
-# Sets up Falco with Modern eBPF & the Python Automated Isolation Sentinel
+# Falco Sentinel -  Linux Installer
+# Installation of Falco with Modern eBPF & the Python Automated Isolation Sentinel
 # Supported: Ubuntu 20.04/22.04/24.04, Debian 11/12, Rocky Linux 9, RHEL 9, Fedora
 # ==============================================================================
 
@@ -15,13 +15,13 @@ NC='\033[0m'
 
 echo -e "${BLUE}"
 echo "=============================================================="
-echo "      Falco Sentinel - Automated eBPF Security Setup          "
+echo "      Falco eBPF - Setup          "
 echo "=============================================================="
 echo -e "${NC}"
 
 # Check for root
 if [[ $EUID -ne 0 ]]; then
-   echo -e "${RED}[!] This installation script must be run as root (use sudo).${NC}"
+   echo -e "${RED}[!] The script must be run as root (use sudo).${NC}"
    exit 1
 fi
 
@@ -31,13 +31,14 @@ KERNEL_VERSION=$(uname -r)
 echo "    -> Kernel release: $KERNEL_VERSION"
 
 if [[ -f "/sys/kernel/btf/vmlinux" ]]; then
-    echo -e "${GREEN}    [✓] Kernel BTF (/sys/kernel/btf/vmlinux) detected! Modern eBPF is fully supported.${NC}"
+    echo -e "${GREEN}    [✓] Kernel BTF (/sys/kernel/btf/vmlinux) was detected. Modern eBPF is fully supported.${NC}"
 else
     echo -e "${YELLOW}    [!] Warning: /sys/kernel/btf/vmlinux not found directly.${NC}"
     echo "        Falco will attempt to load BTF from kernel-devel/kernel-headers or fallback to kernel module."
 fi
 
-# 2. Verify Docker Engine
+# 2. Verification of Docker Engine 
+#This installation is not included in the script
 echo -e "${BLUE}[2/6] Verifying Docker daemon presence...${NC}"
 if ! command -v docker &> /dev/null; then
     echo -e "${YELLOW}    -> Docker is not installed. Installing Docker Engine...${NC}"
@@ -48,13 +49,15 @@ else
 fi
 
 # Ensure quarantine Docker network exists
+#the quarantine network is used once a faulty container is detected and is sent to an isolated network to prevent leakages
 docker network inspect falco-quarantine &>/dev/null || \
     docker network create --driver bridge --internal falco-quarantine
 
-# 3. Install Falco from official repository
+# 3. Installation of Falco from official repository
 echo -e "${BLUE}[3/6] Installing official Falco package...${NC}"
 if command -v apt-get &> /dev/null; then
     # Debian / Ubuntu
+    #=======================================================
     apt-get update -qq
     apt-get install -y -qq curl gnupg software-properties-common lsb-release
     
@@ -66,6 +69,7 @@ if command -v apt-get &> /dev/null; then
     apt-get install -y -qq falco
 elif command -v dnf &> /dev/null; then
     # RHEL / Rocky / Fedora
+    #=========================================================
     rpm --import https://falco.org/repo/falcosecurity-packages.asc
     curl -s -o /etc/yum.repos.d/falcosecurity.repo https://falco.org/repo/falcosecurity-rpm.repo
     dnf install -y falco
@@ -78,6 +82,7 @@ echo -e "${GREEN}    [✓] Falco binary installed successfully.${NC}"
 # 4. Deploy Hardened Falco Rules & Modern eBPF Config
 echo -e "${BLUE}[4/6] Deploying hardened eBPF rules and configuration...${NC}"
 mkdir -p /etc/falco
+#this creates the file with the rules
 
 cat << 'EOF' > /etc/falco/falco_rules.local.yaml
 - macro: container_started
@@ -100,7 +105,7 @@ cat << 'EOF' > /etc/falco/falco_rules.local.yaml
     (evt.is_open_read=true or evt.is_open_write=true) and
     container_started and
     sensitive_host_files
-  output: "CRITICAL: Suspicious host filesystem access (container=%container.name id=%container.id file=%fd.name cmd=%proc.cmdline user=%user.name)"
+  output: "CRITICAL (High Risk): Suspicious host filesystem access (container=%container.name id=%container.id file=%fd.name cmd=%proc.cmdline user=%user.name)"
   priority: CRITICAL
   tags: [filesystem, container_security]
 
@@ -242,7 +247,6 @@ fi
 
 echo -e "${GREEN}"
 echo "=============================================================="
-echo "    Falco Sentinel Successfully Installed & Activated!        "
+echo "    Falco Sentinel Successfully Installed and Activated!        "
 echo "=============================================================="
 echo -e "${NC}"
-echo "Run test attack: bash test_exploit.sh"
