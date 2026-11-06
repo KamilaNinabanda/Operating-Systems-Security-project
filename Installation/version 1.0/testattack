@@ -1,0 +1,22 @@
+#start a test container 
+docker run -d --name test-container alpine sleep 300
+# get the ID of that container and simulates a Falco alert
+#=======================================================================#
+CONTAINER_ID=$(docker ps -q -f name=test-container)
+
+curl -X POST http://127.0.0.1:5000/webhook/falco \
+-H "Content-Type: application/json" \
+-d '{
+  "rule": "Unexpected Host Filesystem Access from Container",
+  "priority": "WARNING",
+  "output_fields": {
+    "container.id": "'$CONTAINER_ID'",
+    "container.name": "test-container"
+  }
+}'
+#=======================================================================#
+#The python script will capture the petition and execute container.pause()
+
+#Execute
+docker ps
+The container test-container will showcase the following state: Paused.
