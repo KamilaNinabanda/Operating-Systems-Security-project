@@ -1,9 +1,5 @@
-what does until now?
-Evaluates fd.name startswith /etc/passwd. Omitía /etc/shadow, /etc/sudoers,
-/root/.ssh, montajes de host (/host/etc/*, /rootfs/*),
-access to /var/run/docker.sock, droppers en /dev/shm y openat2.
-The isolation
-Executes container.pause(). 
-Does not capture forensic evidence
-no control of avalanche/cooldown (read loops that may saturate Docker API) 
-No white list for protection.
+Version 2.0
+///////////////////////////////////////////////////
+What does this version 
+///////////////////////////////////////////////////
+Complete version instead of locking only actions related to specific files it blocks any attemp of syscall to alter files like:
