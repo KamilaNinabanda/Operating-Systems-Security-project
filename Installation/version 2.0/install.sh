@@ -352,11 +352,15 @@ cat > /etc/falco/rules.d/guard_rules.yaml <<'__GUARD_EOF__'
   condition: (evt.type in (execve, execveat) and evt.dir = <)
 - macro: guard_trusted
   condition: (container.image.repository in (falcosecurity/falco, falco-guard))
+# Arranque de contenedores: runc abre el rootfs en /var/lib/docker/rootfs/overlayfs/ (ruido, no ataque).
+# Excepción estrecha: solo ese par proceso+ruta. El resto de /var/lib/docker/ sigue vigilado.
+- macro: guard_runc_startup
+  condition: (proc.name startswith "runc:" and fd.name startswith /var/lib/docker/rootfs/overlayfs/)
 
 - rule: Container Accessing Host Filesystem
   desc: Un contenedor abre archivos de rutas del host (bind mounts de / , /proc/1/root, runtime dirs)
   condition: >
-    guard_open and container.id != host and not guard_trusted and
+    guard_open and container.id != host and not guard_trusted and not guard_runc_startup and
     (fd.name startswith /host/ or fd.name startswith /hostfs/ or
      fd.name startswith /proc/1/root or fd.name startswith /var/lib/kubelet/ or
      fd.name startswith /var/lib/docker/ or fd.name startswith /var/lib/containerd/)
