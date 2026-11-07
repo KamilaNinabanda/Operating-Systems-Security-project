@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# Just for ubuntu (for now i will adjust for rhel)
 # ==============================================================================
 # falco-guard: installer (Falco modern eBPF + Python in systemd)
 # OS distributions supported: Ubuntu 22.04/24.04, Debian 12 (Python >= 3.10), kernel >= 5.8 with BTF
