@@ -5,7 +5,3 @@ falco/
 ├── falco.yaml                  # Configuration with driver modern_ebpf and HTTP output
 ├── install.sh                  # Automated installer for local
 ├── test_level0_sanity.sh       # Test of the kernel y Docker
-├── test_level1_filesystem.sh   # Intrusion test to the filesystem 
-├── test_level3_dockerescape.sh # Test for try a socket Docker
-
-#=======How to deploy tests=============#
