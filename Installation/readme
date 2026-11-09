@@ -1,5 +1,23 @@
 Version 2.0
-///////////////////////////////////////////////////
-What does this version 
-///////////////////////////////////////////////////
-Complete version instead of locking only actions related to specific files it blocks any attemp of syscall to alter files like:
+MONITORING TOOL WITH FALCO
+=============================
+The tool mainly monitors and responds to suspicious activity within Docker containers, using Falco with eBPF
+and Python.
+It evaluates events, generate alerts, isolate containers, and enable their recovery.
+
+---------------------------------------------------
+
+DECISION MAKING
+=============================
+The file to define the response policies is located in policy.yaml
+A Python-based engine was developed to analyze events received from Falco and determine the action the system should take.
+There are 3 actions
+
+IGNORE (Events that does not require attention)
+ALERT (Register and notifies when a suspicious activity takes place)
+ISOLATE (Execute the container isolation)
+
+There is also an allowlist: Allows the exclusion of containers and images considered trusted,to reduce unnecessary alerts.
+Allows to isolate a container when the same rule is activated a certain number of times within a time window.
+
+-------------------------------------------------------
