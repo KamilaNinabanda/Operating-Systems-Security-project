@@ -1,7 +1,5 @@
 #!/usr/bin/env bash
-# Ubuntu/Debian only (the RHEL version is handled separately)
 # ==============================================================================
-# Sentinel_Falco: installer (Falco modern eBPF + Python in systemd)
 # Supported OS: Ubuntu 22.04/24.04, Debian 12 (Python >= 3.10), kernel >= 5.8 with BTF
 # ==============================================================================
 set -euo pipefail
@@ -13,12 +11,15 @@ CYAN='\033[0;36m'
 NC='\033[0m'
 
 [[ $EUID -eq 0 ]] || { echo -e "${RED}[!] Execute as root with sudo.${NC}"; exit 1; }
-DETECTION=true; [[ "${1:-}" == "--enforce" ]] && DETECTION=false
+DETECTION_MODE=true
+if [[ "${1:-}" == "--enforce" ]]; then
+  DETECTION_MODE=false
+fi
 
-# Avoid interactive prompts about restarting services
+# Avoid interactive prompts when packages ask whether services should restart.
 export DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=l
 export FALCO_FRONTEND=noninteractive FALCO_DRIVER_CHOICE=modern_ebpf
-APT="apt-get install -y -qq -o Dpkg::Options::=--force-confold"
+APT_INSTALL="apt-get install -y -qq -o Dpkg::Options::=--force-confold"
 
 # --- Paths ---
 INSTALL_DIR=/opt/Sentinel_Falco
@@ -38,7 +39,7 @@ say Step 1 "${BLUE} Validating kernel and BTF${NC}"
 say 2/7 "${BLUE}Installing dependencies${NC}"
 command -v apt-get >/dev/null || die "${RED}CRITICAL: This installer only supports Debian/Ubuntu (apt)."
 apt-get update -qq
-$APT ca-certificates curl gnupg openssl python3 python3-venv
+$APT_INSTALL ca-certificates curl gnupg openssl python3 python3-venv
 python3 -c 'import sys; sys.exit(0 if sys.version_info >= (3,10) else 1)' || die "${YELLOW}Python >= 3.10 is required (you have $(python3 -V))."
 
 say 3/7 "${BLUE}Verifying Docker${NC}"
@@ -53,7 +54,7 @@ if ! command -v falco >/dev/null; then
   curl -fsSL https://falco.org/repo/falcosecurity-packages.asc | gpg --dearmor --yes -o "$APT_KEYRING"
   echo "deb [signed-by=$APT_KEYRING] https://download.falco.org/packages/deb stable main" > /etc/apt/sources.list.d/falcosecurity.list
   apt-get update -qq
-  $APT falco
+  $APT_INSTALL falco
 fi
 
 say 5/7 "${BLUE}Deploying Sentinel_Falco in $INSTALL_DIR${NC}"
@@ -71,19 +72,19 @@ import yaml
 
 
 @dataclass
-class Decision:
+class DecisionActions:
     action: str  # ignore | alert | isolate
     reason: str
 
 
-class PolicyEngine:
+class Policies:
     def __init__(self, cfg: dict):
         self.cfg = cfg
         self._hits = defaultdict(deque)
         self._lock = threading.Lock()
 
     @classmethod
-    def from_file(cls, path: str) -> "PolicyEngine":
+    def from_file(cls, path: str) -> "Policies":
         with open(path) as f:
             return cls(yaml.safe_load(f) or {})
 
@@ -95,20 +96,20 @@ class PolicyEngine:
             image.startswith(p) for p in al.get("image_prefixes", [])
         )
 
-    def decide(self, event: dict) -> Decision:
+    def decide(self, event: dict) -> DecisionActions:
         f = event.get("output_fields") or {}
         cid = f.get("container.id")
         if not cid or cid == "host":
-            return Decision("ignore", "event outside a container")
+            return DecisionActions("ignore", "event outside a container")
         if self._allowlisted(f):
-            return Decision("ignore", "container is in allowlist")
+            return DecisionActions("ignore", "container is in allowlist")
 
         rule = event.get("rule", "")
         rcfg = (self.cfg.get("rules") or {}).get(rule)
         if rcfg is None:
-            return Decision("alert", "rule without a policy: alert only")
+            return DecisionActions("alert", "rule without a policy: alert only")
         if rcfg.get("action") == "isolate":
-            return Decision("isolate", f"Critical rule: {rule}")
+            return DecisionActions("isolate", f"Critical rule: {rule}")
 
         n, window = rcfg.get("escalate_after"), rcfg.get("window", 60)
         if n:
@@ -120,8 +121,8 @@ class PolicyEngine:
                     q.popleft()
                 if len(q) >= n:
                     q.clear()
-                    return Decision("isolate", f"{n} events of '{rule}' in {window}s")
-        return Decision("alert", "alert only")
+                    return DecisionActions("isolate", f"{n} events of '{rule}' in {window}s")
+        return DecisionActions("alert", "alert only")
 __GUARD_EOF__
 cat > "$INSTALL_DIR/guard/isolation_recovery_container.py" <<'__GUARD_EOF__'
 """Executes container isolation and recovery via Docker SDK (with forensic evidence and rollback)."""
@@ -136,7 +137,7 @@ import docker
 log = logging.getLogger("guard.isolator")
 
 
-class Isolator:
+class ContainerIsolation:
     def __init__(self, steps, detection_mode, data_dir):
         self.steps = steps or ["network", "pause"]  # network | pause | stop
         self.detection_mode = detection_mode
@@ -166,17 +167,18 @@ class Isolator:
     def is_isolated(self, cid) -> bool:
         return self._find(cid) is not None
 
-    def _forensics(self, c) -> str:
-        attrs = json.loads(json.dumps(c.attrs))
-        # Redact environment variable values (they may contain secrets)
-        attrs["Config"]["Env"] = [e.split("=", 1)[0] + "=<redacted>" for e in attrs["Config"].get("Env") or []]
-        data = {"inspect": attrs, "fs_diff": c.diff()}
-        if c.status == "running":
-            data["processes"] = c.top()
-        data["logs_tail"] = c.logs(tail=200).decode(errors="replace")
-        path = os.path.join(self.forensics_dir, f"{c.name}-{int(time.time())}.json")
+    def _gather_forensics(self, container) -> str:
+        # Save a snapshot before changing the container state.
+        attrs = json.loads(json.dumps(container.attrs))
+        #Since containers can have API passwords, token or passwords the info replaces that for "not for reading"
+        attrs["Config"]["Env"] = [item.split("=", 1)[0] + "=<not for reading>" for item in attrs["Config"].get("Env") or []]
+        forensic_data = {"inspect": attrs, "fs_diff": container.diff()}
+        if container.status == "running":
+            forensic_data["processes"] = container.top()
+        forensic_data["logs_tail"] = container.logs(tail=200).decode(errors="replace")
+        path = os.path.join(self.forensics_dir, f"{container.name}-{int(time.time())}.json")
         with open(path, "w") as f:
-            json.dump(data, f, indent=2, default=str)
+            json.dump(forensic_data, f, indent=2, default=str)
         return path
 
     def isolate(self, cid: str, reason: str) -> dict:
@@ -193,7 +195,7 @@ class Isolator:
             if self.detection_mode:
                 return {"status": "detection_mode", "container": c.name, "would_do": steps}
 
-            forensics = self._forensics(c)  # collect evidence first
+            forensics = self._gather_forensics(c)  # Keep the evidence before isolating it.
             done = []
             for step in steps:
                 if step == "network" and not host_net:
@@ -244,7 +246,7 @@ import requests
 log = logging.getLogger("guard.notifier")
 
 
-class Notifier:
+class NotificationAlerter:
     def __init__(self, alert_log, slack_url=None, webhook_url=None):
         self.alert_log, self.slack_url, self.webhook_url = alert_log, slack_url, webhook_url
 
@@ -282,9 +284,9 @@ import os
 
 from fastapi import FastAPI, Header, HTTPException, Query
 
-from .isolation_recovery_container import Isolator
-from .notification_alerter import Notifier
-from .policy import PolicyEngine
+from .isolation_recovery_container import ContainerIsolation
+from .notification_alerter import NotificationAlerter
+from .policy import Policies
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(levelname)s %(message)s")
 
@@ -292,10 +294,10 @@ TOKEN = os.getenv("GUARD_TOKEN", "")
 DATA = os.getenv("GUARD_DATA", "/var/lib/Sentinel_Falco")
 os.makedirs(DATA, exist_ok=True)
 
-engine = PolicyEngine.from_file(os.getenv("GUARD_POLICY", "config/policy_rules_defined.yaml"))
+engine = Policies.from_file(os.getenv("GUARD_POLICY", "config/policy_rules_defined.yaml"))
 detection_mode = os.getenv("GUARD_DETECTION_MODE", str(engine.cfg.get("detection_mode", False))).lower() == "true"
-isolator = Isolator(engine.cfg.get("isolation"), detection_mode, DATA)
-notifier = Notifier(os.path.join(DATA, "alerts.jsonl"),
+isolator = ContainerIsolation(engine.cfg.get("isolation"), detection_mode, DATA)
+notifier = NotificationAlerter(os.path.join(DATA, "alerts.jsonl"),
                     os.getenv("SLACK_WEBHOOK_URL"), os.getenv("ALERT_WEBHOOK_URL"))
 
 app = FastAPI(title="Sentinel_Falco")
@@ -353,15 +355,15 @@ allowlist:                # never alert or isolate these
   image_prefixes: ["falcosecurity/"]
 
 rules:
-  "Container Accessing Host Filesystem": {action: isolate}
-  "Container Escape Artifact Write":     {action: isolate}
-  "Container Accessing Container Runtime Socket": {action: isolate}
-  "Escape Tool Executed In Container":   {action: isolate}
-  "Mount Syscall In Container":          {action: alert}   # no escalation until runc noise is validated
-  "Interactive Shell Spawned In Container": {action: alert}
+  "Host Filesystem non Authorized":   {action: isolate}
+  "File Modification Escape Attempt":  {action: isolate}
+  "Runtime Socket non Authorized":    {action: isolate}
+  "NSENTER Execution":                {action: isolate}
+  "Mount Detection":                  {action: alert}   # no escalation until runc noise is validated
+  "Interactive Shell Active":         {action: alert}
 __GUARD_EOF__
 cat > "$FALCO_RULES" <<'__GUARD_EOF__'
-# Falco rules (>= 0.38) to detect suspicious behaviour in containers
+# The rules need Falco version 0.38 or higher to be executed
 - macro: guard_open
   condition: (evt.type in (open, openat, openat2) and fd.num >= 0)
 - macro: guard_spawn
@@ -373,7 +375,7 @@ cat > "$FALCO_RULES" <<'__GUARD_EOF__'
 - macro: guard_runc_startup
   condition: (proc.name startswith "runc:" and fd.name startswith /var/lib/docker/rootfs/overlayfs/)
 
-- rule: Container Accessing Host Filesystem
+- rule: Host Filesystem non Authorized
   desc: A container opens files from host paths (bind mounts of /, /proc/1/root, runtime dirs)
   condition: >
     guard_open and container.id != host and not guard_trusted and not guard_runc_startup and
@@ -386,7 +388,7 @@ cat > "$FALCO_RULES" <<'__GUARD_EOF__'
   priority: CRITICAL
   tags: [container, host_fs, guard]
 
-- rule: Container Escape Artifact Write
+- rule: File Modification Escape Attempt
   desc: Writing to typical escape artifacts (cgroup release_agent, core_pattern, modprobe)
   condition: >
     evt.type in (open, openat, openat2) and evt.is_open_write = true and
@@ -398,7 +400,7 @@ cat > "$FALCO_RULES" <<'__GUARD_EOF__'
   priority: CRITICAL
   tags: [container, escape, guard]
 
-- rule: Container Accessing Container Runtime Socket
+- rule: Runtime Socket non Authorized
   desc: A container opens/connects to the Docker/containerd/CRI-O socket
   condition: >
     (guard_open or (evt.type = connect and evt.dir = <)) and container.id != host and
@@ -410,7 +412,7 @@ cat > "$FALCO_RULES" <<'__GUARD_EOF__'
   priority: CRITICAL
   tags: [container, runtime_socket, guard]
 
-- rule: Escape Tool Executed In Container
+- rule: NSENTER Execution
   desc: nsenter executed inside a container
   condition: guard_spawn and container.id != host and not guard_trusted and proc.name = nsenter
   output: >
@@ -418,7 +420,7 @@ cat > "$FALCO_RULES" <<'__GUARD_EOF__'
   priority: CRITICAL
   tags: [container, escape, guard]
 
-- rule: Mount Syscall In Container
+- rule: Mount Detection
   desc: mount() call from a container
   condition: evt.type = mount and evt.dir = < and container.id != host and not guard_trusted and not proc.name startswith "runc:"
   output: >
@@ -426,7 +428,7 @@ cat > "$FALCO_RULES" <<'__GUARD_EOF__'
   priority: WARNING
   tags: [container, mount, guard]
 
-- rule: Interactive Shell Spawned In Container
+- rule: Interactive Shell Active
   desc: Interactive shell inside a container
   condition: >
     guard_spawn and container.id != host and not guard_trusted and
@@ -444,17 +446,17 @@ python3 -m venv "$INSTALL_DIR/venv"
 
 say 6/7 "${BLUE}Configuring token and Falco HTTP output${NC}"
 if [[ -f /etc/falco-guard.env ]]; then
-  # Reinstall: keep the token, SLACK_WEBHOOK_URL and the mode (the mode only changes with --enforce)
+  # On reinstall, keep the existing token and webhook settings. --enforce can change the mode.
   TOKEN=$(grep '^GUARD_TOKEN=' /etc/falco-guard.env | cut -d= -f2)
-  [[ "${1:-}" == "--enforce" ]] && sed -i "s/^GUARD_DETECTION_MODE=.*/GUARD_DETECTION_MODE=$DETECTION/" /etc/falco-guard.env
-  DETECTION=$(grep '^GUARD_DETECTION_MODE=' /etc/falco-guard.env | cut -d= -f2)
+  [[ "${1:-}" == "--enforce" ]] && sed -i "s/^GUARD_DETECTION_MODE=.*/GUARD_DETECTION_MODE=$DETECTION_MODE/" /etc/falco-guard.env
+  DETECTION_MODE=$(grep '^GUARD_DETECTION_MODE=' /etc/falco-guard.env | cut -d= -f2)
 else
   TOKEN=$(openssl rand -hex 24)
-  printf 'GUARD_TOKEN=%s\nGUARD_DETECTION_MODE=%s\n# SLACK_WEBHOOK_URL=\n' "$TOKEN" "$DETECTION" > /etc/falco-guard.env
+  printf 'GUARD_TOKEN=%s\nGUARD_DETECTION_MODE=%s\n# SLACK_WEBHOOK_URL=\n' "$TOKEN" "$DETECTION_MODE" > /etc/falco-guard.env
 fi
 chmod 600 /etc/falco-guard.env
 
-# Goes in config.d: it does not replace the default falco.yaml, it only extends it.
+# Keep this in config.d so it extends the main Falco config instead of replacing it.
 cat > "$FALCO_CONFIG" <<EOC
 engine:
   kind: modern_ebpf
@@ -497,7 +499,7 @@ systemctl daemon-reload
 systemctl enable --now falco-guard.service          # guard first...
 systemctl disable --now falco-kmod.service falco-bpf.service 2>/dev/null || true
 systemctl enable falco-modern-bpf.service
-systemctl restart falco-modern-bpf.service           # ...then Falco
+systemctl restart falco-modern-bpf.service           # Start Falco after the guard is ready.
 
 for i in {1..15}; do curl -fs http://127.0.0.1:8080/health >/dev/null && break || sleep 1; done
 curl -fs http://127.0.0.1:8080/health || die "${RED}The guard is not responding: journalctl -u falco-guard -n 30"
@@ -506,19 +508,10 @@ systemctl is-active --quiet falco-modern-bpf || die "${RED}Falco could not start
 
 cat <<EOM
 
-==============================================================
- Sentinel_Falco installed. Mode: $([[ $DETECTION == true ]] && echo "DETECTION_MODE (detects and alerts only, no isolation)" || echo "ENFORCE (real isolation)")
-==============================================================
+===========================================================================================================================
+ Sentinel_Falco installed. Mode: $([[ $DETECTION_MODE == true ]] && echo "DETECTION_MODE (detects and alerts only, no isolation)" || echo "ENFORCE (real isolation)")
+=============================================================================================================================
  Token (saved in /etc/falco-guard.env): $TOKEN
 
- Test:       docker run -d --name victim -v /:/host alpine sleep 3600
-             docker exec victim cat /host/etc/hostname
-             tail -n 3 $DATA_DIR/alerts.jsonl
- Enforce:    sudo sed -i 's/GUARD_DETECTION_MODE=true/GUARD_DETECTION_MODE=false/' /etc/falco-guard.env && sudo systemctl restart falco-guard
- Isolated:   curl -H "X-Guard-Token: $TOKEN" localhost:8080/isolated_container
- Release:    curl -X POST -H "X-Guard-Token: $TOKEN" localhost:8080/release/<name>
- Forensics:  ls $FORENSICS_DIR
  Logs:       journalctl -u falco-guard -f   |   journalctl -u falco-modern-bpf -f
- Recommended: reboot the VM once (updated kernel/libraries) and review
-              alerts.jsonl for 24-48 h in DETECTION_MODE before enabling ENFORCE.
 EOM
