@@ -13,7 +13,7 @@ CYAN='\033[0;36m'
 NC='\033[0m'
 
 [[ $EUID -eq 0 ]] || { echo -e "${RED}[!] Execute as root with sudo.${NC}"; exit 1; }
-DRY=true; [[ "${1:-}" == "--enforce" ]] && DRY=false
+DETECTION=true; [[ "${1:-}" == "--enforce" ]] && DETECTION=false
 
 # Avoid interactive prompts about restarting services
 export DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=l
@@ -137,9 +137,9 @@ log = logging.getLogger("guard.isolator")
 
 
 class Isolator:
-    def __init__(self, steps, dry_run, data_dir):
+    def __init__(self, steps, detection_mode, data_dir):
         self.steps = steps or ["network", "pause"]  # network | pause | stop
-        self.dry_run = dry_run
+        self.detection_mode = detection_mode
         self.forensics_dir = os.path.join(data_dir, "Forensics")
         self.state_path = os.path.join(data_dir, "state.json")
         os.makedirs(self.forensics_dir, exist_ok=True)
@@ -190,8 +190,8 @@ class Isolator:
             # With network_mode=host the network cannot be disconnected: freeze the container instead.
             if host_net and "pause" not in steps and "stop" not in steps:
                 steps.append("pause")
-            if self.dry_run:
-                return {"status": "dry_run", "container": c.name, "would_do": steps}
+            if self.detection_mode:
+                return {"status": "detection_mode", "container": c.name, "would_do": steps}
 
             forensics = self._forensics(c)  # collect evidence first
             done = []
@@ -293,8 +293,8 @@ DATA = os.getenv("GUARD_DATA", "/var/lib/Sentinel_Falco")
 os.makedirs(DATA, exist_ok=True)
 
 engine = PolicyEngine.from_file(os.getenv("GUARD_POLICY", "config/policy_rules_defined.yaml"))
-dry_run = os.getenv("GUARD_DRY_RUN", str(engine.cfg.get("dry_run", False))).lower() == "true"
-isolator = Isolator(engine.cfg.get("isolation"), dry_run, DATA)
+detection_mode = os.getenv("GUARD_DETECTION_MODE", str(engine.cfg.get("detection_mode", False))).lower() == "true"
+isolator = Isolator(engine.cfg.get("isolation"), detection_mode, DATA)
 notifier = Notifier(os.path.join(DATA, "alerts.jsonl"),
                     os.getenv("SLACK_WEBHOOK_URL"), os.getenv("ALERT_WEBHOOK_URL"))
 
@@ -327,7 +327,7 @@ def falco_event(event: dict, token: str | None = Query(None), x_guard_token: str
 
 @app.get("/health")
 def health():
-    return {"status": "ok", "dry_run": dry_run, "isolation_steps": isolator.steps}
+    return {"status": "ok", "detection_mode": detection_mode, "isolation_steps": isolator.steps}
 
 
 @app.get("/isolated_container")
@@ -345,7 +345,7 @@ POLICY_DST="$INSTALL_DIR/config/$POLICY_NAME"
 if [ -f "$POLICY_DST" ]; then POLICY_DST="$POLICY_DST.new"; echo "[i] $POLICY_NAME already exists and is preserved; the newer version is in $POLICY_DST"; fi
 cat > "$POLICY_DST" <<'__GUARD_EOF__'
 # Sentinel_Falco response policy
-dry_run: false            # true = only log what would be isolated
+detection_mode: false            # true = detection mode: detect and alert only, never isolate
 isolation: [network, pause]   # steps: network (disconnect from networks) | pause (freeze) | stop
 
 allowlist:                # never alert or isolate these
@@ -446,11 +446,11 @@ say 6/7 "${BLUE}Configuring token and Falco HTTP output${NC}"
 if [[ -f /etc/falco-guard.env ]]; then
   # Reinstall: keep the token, SLACK_WEBHOOK_URL and the mode (the mode only changes with --enforce)
   TOKEN=$(grep '^GUARD_TOKEN=' /etc/falco-guard.env | cut -d= -f2)
-  [[ "${1:-}" == "--enforce" ]] && sed -i "s/^GUARD_DRY_RUN=.*/GUARD_DRY_RUN=$DRY/" /etc/falco-guard.env
-  DRY=$(grep '^GUARD_DRY_RUN=' /etc/falco-guard.env | cut -d= -f2)
+  [[ "${1:-}" == "--enforce" ]] && sed -i "s/^GUARD_DETECTION_MODE=.*/GUARD_DETECTION_MODE=$DETECTION/" /etc/falco-guard.env
+  DETECTION=$(grep '^GUARD_DETECTION_MODE=' /etc/falco-guard.env | cut -d= -f2)
 else
   TOKEN=$(openssl rand -hex 24)
-  printf 'GUARD_TOKEN=%s\nGUARD_DRY_RUN=%s\n# SLACK_WEBHOOK_URL=\n' "$TOKEN" "$DRY" > /etc/falco-guard.env
+  printf 'GUARD_TOKEN=%s\nGUARD_DETECTION_MODE=%s\n# SLACK_WEBHOOK_URL=\n' "$TOKEN" "$DETECTION" > /etc/falco-guard.env
 fi
 chmod 600 /etc/falco-guard.env
 
@@ -507,18 +507,18 @@ systemctl is-active --quiet falco-modern-bpf || die "${RED}Falco could not start
 cat <<EOM
 
 ==============================================================
- Sentinel_Falco installed. Mode: $([[ $DRY == true ]] && echo "DRY_RUN (isolation is only simulated)" || echo "ENFORCE (real isolation)")
+ Sentinel_Falco installed. Mode: $([[ $DETECTION == true ]] && echo "DETECTION_MODE (detects and alerts only, no isolation)" || echo "ENFORCE (real isolation)")
 ==============================================================
  Token (saved in /etc/falco-guard.env): $TOKEN
 
  Test:       docker run -d --name victim -v /:/host alpine sleep 3600
              docker exec victim cat /host/etc/hostname
              tail -n 3 $DATA_DIR/alerts.jsonl
- Enforce:    sudo sed -i 's/GUARD_DRY_RUN=true/GUARD_DRY_RUN=false/' /etc/falco-guard.env && sudo systemctl restart falco-guard
+ Enforce:    sudo sed -i 's/GUARD_DETECTION_MODE=true/GUARD_DETECTION_MODE=false/' /etc/falco-guard.env && sudo systemctl restart falco-guard
  Isolated:   curl -H "X-Guard-Token: $TOKEN" localhost:8080/isolated_container
  Release:    curl -X POST -H "X-Guard-Token: $TOKEN" localhost:8080/release/<name>
  Forensics:  ls $FORENSICS_DIR
  Logs:       journalctl -u falco-guard -f   |   journalctl -u falco-modern-bpf -f
  Recommended: reboot the VM once (updated kernel/libraries) and review
-              alerts.jsonl for 24-48 h in DRY_RUN before enabling ENFORCE.
+              alerts.jsonl for 24-48 h in DETECTION_MODE before enabling ENFORCE.
 EOM
