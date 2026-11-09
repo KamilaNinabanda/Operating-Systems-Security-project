@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Just for ubuntu (for now i will adjust for rhel)
+# Just for ubuntu (I will adjust for rhel)
 # ==============================================================================
 # falco-guard: installer (Falco modern eBPF + Python in systemd)
 # OS distributions supported: Ubuntu 22.04/24.04, Debian 12 (Python >= 3.10), kernel >= 5.8 with BTF
@@ -24,10 +24,10 @@ say() { echo -e "\033[0;34m[$1]\033[0m $2"; }
 die() { echo -e "\033[0;31m[!] $1\033[0m" >&2; exit 1; }
 
 say 1/7 "${CYAN} Validating kernel and BTF"
-[[ -f /sys/kernel/btf/vmlinux ]] || die "{YELLOW}    [!] Missing /sys/kernel/btf/vmlinux: modern_ebpf won't work (kernel $(uname -r)). Please use a version of  kernel greater than 5.8 with BTF."
+[[ -f /sys/kernel/btf/vmlinux ]] || die "{YELLOW}  [!] Missing /sys/kernel/btf/vmlinux: modern_ebpf won't work (kernel $(uname -r)). Please use a version of a kernel greater than 5.8 with BTF."
 
 say 2/7 "${BLUE}Installing dependencies"
-command -v apt-get >/dev/null || die "Only for Debian/Ubuntu (apt) is supported in this installer."
+command -v apt-get >/dev/null || die "${RED} CRITICAL: Only for Debian/Ubuntu (apt) is supported in this installer."
 apt-get update -qq
 $APT ca-certificates curl gnupg openssl python3 python3-venv
 python3 -c 'import sys; sys.exit(0 if sys.version_info >= (3,10) else 1)' || die "${YELLOW} [!] A version of Python greater or equal to 3.10 (you have $(python3 -V))."
@@ -445,7 +445,7 @@ else
 fi
 chmod 600 /etc/falco-guard.env
  
-# This belongs to config.d: Does not replaces falco.yaml, it only extends it.
+# This belongs to config.d: Does not replaces falco.yaml, is just an extension.
 cat > /etc/falco/config.d/guard.yaml <<EOC
 engine:
   kind: modern_ebpf
@@ -453,7 +453,7 @@ engine:
 json_output: true
 json_include_output_property: true
 json_include_tags_property: true
-rule_matching: all   # check all the rules (for default 'first' let the default rules override the newly created)
+rule_matching: all   # check all the rules (by default 'first' let the default rules override the new ones)
 http_output:
   enabled: true
   url: "http://127.0.0.1:8080/falco?token=${TOKEN}"
@@ -480,9 +480,9 @@ RestartSec=3
 WantedBy=multi-user.target
 EOC
  
-say 7/7 "${BLUE} Validating rules and starting services"
+say 7/7 "${CYAN} Validating rules and starting services"
 falco -V /etc/falco/falco_rules.yaml -V /etc/falco/rules.d/guard_rules.yaml >/dev/null 2>&1 \
-  || die "${RED}[!] The rules do not validate. Check: falco -V /etc/falco/falco_rules.yaml -V /etc/falco/rules.d/guard_rules.yaml"
+  || die "${RED}[!] The rules are not valid. Check: falco -V /etc/falco/falco_rules.yaml -V /etc/falco/rules.d/guard_rules.yaml"
  
 systemctl daemon-reload
 systemctl enable --now falco-guard.service          # falco first.
@@ -491,15 +491,15 @@ systemctl enable falco-modern-bpf.service
 systemctl restart falco-modern-bpf.service           
  
 for i in {1..15}; do curl -fs http://127.0.0.1:8080/health >/dev/null && break || sleep 1; done
-curl -fs http://127.0.0.1:8080/health || die "${RED}[!] No answer from FALCO: journalctl -u falco-guard -n 30"
+curl -fs http://127.0.0.1:8080/health || die "${RED} WARNING [!] No answer from FALCO: journalctl -u falco-guard -n 30"
 echo
-systemctl is-active --quiet falco-modern-bpf || die "${RED}[!] Falco could not start: journalctl -u falco-modern-bpf -n 30"
+systemctl is-active --quiet falco-modern-bpf || die "${RED} WARNING [!] Falco could not start: journalctl -u falco-modern-bpf -n 30"
  
 cat <<EOM
  
-==============================================================
+========================================================================================================================================
  falco-guard installed. Mode: $([[ $DRY == true ]] && echo "DRY_RUN (simulates the isolation)" || echo "ENFORCE (actually isolates)")
-==============================================================
+========================================================================================================================================
  Token (guardado en /etc/falco-guard.env): $TOKEN
  
  Test:       docker run -d --name victim -v /:/host alpine sleep 3600
