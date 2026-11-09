@@ -17,6 +17,22 @@ of notifications to external services via Webhooks.
 Main API (Main_alert_falco.py): Developed using FastAPI, it receives events sent by Falco, 
 performs token-based authentication, and coordinates the policy engine, container isolation, and notifications.
 
+===========================================
+FILES
+===========================================
+File                            ||  Function 
+-------------------------------------------------------------------------------------------------
+policy.py	                  || Evaluates events and determines whether to ignore them, generate alerts, 
+                                || or isolate containers.
+isolation_recovery_container.py ||	Perform isolation and recovery of Docker containers.
+notification_alerter.py	    || Manage alerts, logs, and external notifications.
+Main_alert_falco.py	           || Main API that connects Falco with the Sentinel_Falco modules.
+policy_rules_defined.yaml	    || Define policies, exceptions, and response actions.
+rules_detection_falco.yaml	    || Contains custom rules for detecting threats.
+configfalco.yaml	           || Specific configuration for Falco to integrate it with Sentinel_Falco.
+falco-guard.env                 || Authentication and operating mode configuration file.
+
+
 ============================================
 RULES
 ============================================
