@@ -20,7 +20,7 @@ export DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=l
 export FALCO_FRONTEND=noninteractive FALCO_DRIVER_CHOICE=modern_ebpf
 APT="apt-get install -y -qq -o Dpkg::Options::=--force-confold"
 
-# --- Renamed paths ---
+# --- Paths ---
 INSTALL_DIR=/opt/Sentinel_Falco
 DATA_DIR=/var/lib/Sentinel_Falco
 FORENSICS_DIR=$DATA_DIR/Forensics
@@ -32,7 +32,7 @@ APT_KEYRING=/etc/apt/keyrings/verify_repo_install.gpg
 say() { echo -e "\033[0;34m[$1]\033[0m $2"; }
 die() { echo -e "\033[0;31m[!] $1\033[0m" >&2; exit 1; }
 
-say 1/7 "${CYAN}Validating kernel and BTF${NC}"
+say Step 1 "${BLUE} Validating kernel and BTF${NC}"
 [[ -f /sys/kernel/btf/vmlinux ]] || die "${YELLOW}Missing /sys/kernel/btf/vmlinux: modern_ebpf won't work (kernel $(uname -r)). Please use a kernel >= 5.8 with BTF."
 
 say 2/7 "${BLUE}Installing dependencies${NC}"
