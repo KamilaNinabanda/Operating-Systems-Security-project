@@ -123,8 +123,8 @@ class PolicyEngine:
                     return Decision("isolate", f"{n} events of '{rule}' in {window}s")
         return Decision("alert", "alert only")
 __GUARD_EOF__
-cat > "$INSTALL_DIR/guard/isolator.py" <<'__GUARD_EOF__'
-"""Container isolation via Docker SDK (with forensic evidence and rollback)."""
+cat > "$INSTALL_DIR/guard/isolation_recovery_container.py" <<'__GUARD_EOF__'
+"""Executes container isolation and recovery via Docker SDK (with forensic evidence and rollback)."""
 import json
 import logging
 import os
@@ -233,7 +233,7 @@ class Isolator:
             self._save()
             return {"status": "released", "container": rec["name"]}
 __GUARD_EOF__
-cat > "$INSTALL_DIR/guard/notifier.py" <<'__GUARD_EOF__'
+cat > "$INSTALL_DIR/guard/notification_alerter.py" <<'__GUARD_EOF__'
 """Alerts: JSONL log, Slack and generic webhook."""
 import json
 import logging
@@ -282,8 +282,8 @@ import os
 
 from fastapi import FastAPI, Header, HTTPException, Query
 
-from .isolator import Isolator
-from .notifier import Notifier
+from .isolation_recovery_container import Isolator
+from .notification_alerter import Notifier
 from .policy import PolicyEngine
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(levelname)s %(message)s")
