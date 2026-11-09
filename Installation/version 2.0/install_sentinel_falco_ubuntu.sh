@@ -1,6 +1,5 @@
 #!/usr/bin/env bash
-# ==============================================================================
-# ==============================================================================
+#==============================================================================
 set -euo pipefail
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -10,15 +9,12 @@ CYAN='\033[0;36m'
 NC='\033[0m'
 
 [[ $EUID -eq 0 ]] || { echo -e "${RED}[!] Execute as root with sudo.${NC}"; exit 1; }
-DETECTION_MODE=true
-if [[ "${1:-}" == "--enforce" ]]; then
-  DETECTION_MODE=false
-fi
+DETECTION=true; [[ "${1:-}" == "--enforce" ]] && DETECTION=false
 
-# Avoid interactive prompts when packages ask whether services should restart.
+# This prevents the appeareance of prompts regarding services (restarting)
 export DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=l
 export FALCO_FRONTEND=noninteractive FALCO_DRIVER_CHOICE=modern_ebpf
-APT_INSTALL="apt-get install -y -qq -o Dpkg::Options::=--force-confold"
+APT="apt-get install -y -qq -o Dpkg::Options::=--force-confold"
 
 # --- Paths ---
 INSTALL_DIR=/opt/Sentinel_Falco
@@ -33,12 +29,12 @@ say() { echo -e "\033[0;34m[$1]\033[0m $2"; }
 die() { echo -e "\033[0;31m[!] $1\033[0m" >&2; exit 1; }
 
 say Step 1 "${BLUE} Validating kernel and BTF${NC}"
-[[ -f /sys/kernel/btf/vmlinux ]] || die "${YELLOW}Missing /sys/kernel/btf/vmlinux: modern_ebpf won't work (kernel $(uname -r)). Please use a kernel >= 5.8 with BTF."
+[[ -f /sys/kernel/btf/vmlinux ]] || die "${YELLOW} Missing /sys/kernel/btf/vmlinux: modern_ebpf won't work (kernel $(uname -r)). Please use a kernel >= 5.8 with BTF."
 
 say 2/7 "${BLUE}Installing dependencies${NC}"
 command -v apt-get >/dev/null || die "${RED}CRITICAL: This installer only supports Debian/Ubuntu (apt)."
 apt-get update -qq
-$APT_INSTALL ca-certificates curl gnupg openssl python3 python3-venv
+$APT ca-certificates curl gnupg openssl python3 python3-venv
 python3 -c 'import sys; sys.exit(0 if sys.version_info >= (3,10) else 1)' || die "${YELLOW}Python >= 3.10 is required (you have $(python3 -V))."
 
 say 3/7 "${BLUE}Verifying Docker${NC}"
@@ -53,7 +49,7 @@ if ! command -v falco >/dev/null; then
   curl -fsSL https://falco.org/repo/falcosecurity-packages.asc | gpg --dearmor --yes -o "$APT_KEYRING"
   echo "deb [signed-by=$APT_KEYRING] https://download.falco.org/packages/deb stable main" > /etc/apt/sources.list.d/falcosecurity.list
   apt-get update -qq
-  $APT_INSTALL falco
+  $APT falco
 fi
 
 say 5/7 "${BLUE}Deploying Sentinel_Falco in $INSTALL_DIR${NC}"
@@ -166,18 +162,18 @@ class ContainerIsolation:
     def is_isolated(self, cid) -> bool:
         return self._find(cid) is not None
 
-    def _gather_forensics(self, container) -> str:
-        # Save a snapshot before changing the container state.
-        attrs = json.loads(json.dumps(container.attrs))
+    def _gatherInfo(self, c) -> str:
+    #collects data from the container that will be isolated
+        attrs = json.loads(json.dumps(c.attrs))
         #Since containers can have API passwords, token or passwords the info replaces that for "not for reading"
-        attrs["Config"]["Env"] = [item.split("=", 1)[0] + "=<not for reading>" for item in attrs["Config"].get("Env") or []]
-        forensic_data = {"inspect": attrs, "fs_diff": container.diff()}
-        if container.status == "running":
-            forensic_data["processes"] = container.top()
-        forensic_data["logs_tail"] = container.logs(tail=200).decode(errors="replace")
-        path = os.path.join(self.forensics_dir, f"{container.name}-{int(time.time())}.json")
+        attrs["Config"]["Env"] = [e.split("=", 1)[0] + "=<not for reading>" for e in attrs["Config"].get("Env") or []]
+        collectedinfo = {"inspect": attrs, "fs_diff": c.diff()}
+        if c.status == "running":
+            collectedinfo["processes"] = c.top()
+        collectedinfo["logs_tail"] = c.logs(tail=200).decode(errors="replace")
+        path = os.path.join(self.forensics_dir, f"{c.name}-{int(time.time())}.json")
         with open(path, "w") as f:
-            json.dump(forensic_data, f, indent=2, default=str)
+            json.dump(collectedinfo, f, indent=2, default=str)
         return path
 
     def isolate(self, cid: str, reason: str) -> dict:
@@ -194,7 +190,7 @@ class ContainerIsolation:
             if self.detection_mode:
                 return {"status": "detection_mode", "container": c.name, "would_do": steps}
 
-            forensics = self._gather_forensics(c)  # Keep the evidence before isolating it.
+            forensics = self._gatherInfo(c)  # collect evidence first
             done = []
             for step in steps:
                 if step == "network" and not host_net:
@@ -245,7 +241,7 @@ import requests
 log = logging.getLogger("guard.notifier")
 
 
-class NotificationAlerter:
+class Notificationalert:
     def __init__(self, alert_log, slack_url=None, webhook_url=None):
         self.alert_log, self.slack_url, self.webhook_url = alert_log, slack_url, webhook_url
 
@@ -284,7 +280,7 @@ import os
 from fastapi import FastAPI, Header, HTTPException, Query
 
 from .isolation_recovery_container import ContainerIsolation
-from .notification_alerter import NotificationAlerter
+from .notification_alerter import Notificationalert
 from .policy import Policies
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(levelname)s %(message)s")
@@ -296,7 +292,7 @@ os.makedirs(DATA, exist_ok=True)
 engine = Policies.from_file(os.getenv("GUARD_POLICY", "config/policy_rules_defined.yaml"))
 detection_mode = os.getenv("GUARD_DETECTION_MODE", str(engine.cfg.get("detection_mode", False))).lower() == "true"
 isolator = ContainerIsolation(engine.cfg.get("isolation"), detection_mode, DATA)
-notifier = NotificationAlerter(os.path.join(DATA, "alerts.jsonl"),
+notifier = Notificationalert(os.path.join(DATA, "alerts.jsonl"),
                     os.getenv("SLACK_WEBHOOK_URL"), os.getenv("ALERT_WEBHOOK_URL"))
 
 app = FastAPI(title="Sentinel_Falco")
@@ -445,17 +441,17 @@ python3 -m venv "$INSTALL_DIR/venv"
 
 say 6/7 "${BLUE}Configuring token and Falco HTTP output${NC}"
 if [[ -f /etc/falco-guard.env ]]; then
-  # On reinstall, keep the existing token and webhook settings. --enforce can change the mode.
+  # Reinstall: keep the token, SLACK_WEBHOOK_URL and the mode (the mode only changes with --enforce)
   TOKEN=$(grep '^GUARD_TOKEN=' /etc/falco-guard.env | cut -d= -f2)
-  [[ "${1:-}" == "--enforce" ]] && sed -i "s/^GUARD_DETECTION_MODE=.*/GUARD_DETECTION_MODE=$DETECTION_MODE/" /etc/falco-guard.env
-  DETECTION_MODE=$(grep '^GUARD_DETECTION_MODE=' /etc/falco-guard.env | cut -d= -f2)
+  [[ "${1:-}" == "--enforce" ]] && sed -i "s/^GUARD_DETECTION_MODE=.*/GUARD_DETECTION_MODE=$DETECTION/" /etc/falco-guard.env
+  DETECTION=$(grep '^GUARD_DETECTION_MODE=' /etc/falco-guard.env | cut -d= -f2)
 else
   TOKEN=$(openssl rand -hex 24)
-  printf 'GUARD_TOKEN=%s\nGUARD_DETECTION_MODE=%s\n# SLACK_WEBHOOK_URL=\n' "$TOKEN" "$DETECTION_MODE" > /etc/falco-guard.env
+  printf 'GUARD_TOKEN=%s\nGUARD_DETECTION_MODE=%s\n# SLACK_WEBHOOK_URL=\n' "$TOKEN" "$DETECTION" > /etc/falco-guard.env
 fi
 chmod 600 /etc/falco-guard.env
 
-# Keep this in config.d so it extends the main Falco config instead of replacing it.
+# Goes in config.d: it does not replace the default falco.yaml, it only extends it.
 cat > "$FALCO_CONFIG" <<EOC
 engine:
   kind: modern_ebpf
@@ -498,7 +494,7 @@ systemctl daemon-reload
 systemctl enable --now falco-guard.service          # guard first...
 systemctl disable --now falco-kmod.service falco-bpf.service 2>/dev/null || true
 systemctl enable falco-modern-bpf.service
-systemctl restart falco-modern-bpf.service           # Start Falco after the guard is ready.
+systemctl restart falco-modern-bpf.service           # ...then Falco
 
 for i in {1..15}; do curl -fs http://127.0.0.1:8080/health >/dev/null && break || sleep 1; done
 curl -fs http://127.0.0.1:8080/health || die "${RED}The guard is not responding: journalctl -u falco-guard -n 30"
@@ -508,7 +504,7 @@ systemctl is-active --quiet falco-modern-bpf || die "${RED}Falco could not start
 cat <<EOM
 
 ===========================================================================================================================
- Sentinel_Falco installed. Mode: $([[ $DETECTION_MODE == true ]] && echo "DETECTION_MODE (detects and alerts only, no isolation)" || echo "ENFORCE (real isolation)")
+ Sentinel_Falco installed. Mode: $([[ $DETECTION == true ]] && echo "DETECTION_MODE (detects and alerts only, no isolation)" || echo "ENFORCE (real isolation)")
 =============================================================================================================================
  Token (saved in /etc/falco-guard.env): $TOKEN
 
