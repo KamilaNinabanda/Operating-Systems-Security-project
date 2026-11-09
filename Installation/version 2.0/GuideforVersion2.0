@@ -1,5 +1,5 @@
 sudo chmod +x install_sentinel_falco_ubuntu.sh     
-sudo ./install_sentinel_falco.sh          #  DRY_RUN 
+sudo ./install_sentinel_falco_ubuntu.sh          #  DETECTION_MODE
 
 if desire to activate isolation
 sudo ./install_sentinel_falco.sh --enforce
