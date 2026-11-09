@@ -1,0 +1,19 @@
+SOLUTION
+
+RULES AND ACTIONS
+Container Accessing Host Filesystem: access to host files 
+                                      ISOLATION
+Container Escape: Writes in files related to possible escapes 
+                                      ISOLATION
+Accessing Container Runtime Socket: Access to docker socket or containerd 
+                                      ISOLATION
+Escape Tool Executed: when nsenter is executed 
+                                      ISOLATION
+Mount Syscall: execution of mount calls 
+                                      ALERT
+Interactive Shell Spawned Interactive terminal opened 
+                                        ALERT
+
+OPTIONS OF FUNCTIONING 
+DETECTION_MODE: simulation mode. just to detect and alert
+ENFORCE: it includes isolation
