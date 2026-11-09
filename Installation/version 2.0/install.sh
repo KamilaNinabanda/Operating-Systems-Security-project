@@ -1,17 +1,26 @@
 #!/usr/bin/env bash
 # ==============================================================================
-# falco-guard: instalador nativo (Falco modern eBPF + guardián Python en systemd)
-# Soportado: Ubuntu 22.04/24.04, Debian 12, RHEL/Rocky/AlmaLinux 8.x-9.x, Fedora
-#            (Docker Engine real, no Podman; Python >= 3.9; kernel >= 5.8 con BTF)
-# Uso: sudo bash install-falco-guard.sh [--enforce]
-#   (por defecto arranca en DRY_RUN: detecta y alerta pero NO aísla)
+# Suported platforms: Ubuntu 22.04/24.04, Debian 12, RHEL/Rocky/AlmaLinux 8.x-9.x, Fedora
+#   (by default the tool runs in DRY_RUN: detects and alerts but no monitoring feature)
 # ==============================================================================
 set -euo pipefail
 
-[[ $EUID -eq 0 ]] || { echo "[!] Ejecuta como root (sudo)."; exit 1; }
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+BLUE='\033[0;34m'
+YELLOW='\033[1;33m'
+NC='\033[0m'
+
+echo -e "${BLUE}"
+echo "=============================================================="
+echo "      Monitoring and Alerting Tool - Setup          "
+echo "=============================================================="
+echo -e "${NC}"
+
+[[ $EUID -eq 0 ]] || { echo "${RED}[!] Execute as root (sudo)."; exit 1; }
 DRY=true; [[ "${1:-}" == "--enforce" ]] && DRY=false
 
-# Sin preguntas interactivas (needrestart / debconf). 'l' solo lista, no reinicia servicios.
+# To avoid the questions of restarting services
 export DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=l
 export FALCO_FRONTEND=noninteractive FALCO_DRIVER_CHOICE=modern_ebpf
 APT="apt-get install -y -qq -o Dpkg::Options::=--force-confold"
@@ -19,24 +28,24 @@ APT="apt-get install -y -qq -o Dpkg::Options::=--force-confold"
 say() { echo -e "\033[0;34m[$1]\033[0m $2"; }
 die() { echo -e "\033[0;31m[!] $1\033[0m" >&2; exit 1; }
 
-# --- Distribución y gestor de paquetes ---
+# --- Distribution and package manager ---
 . /etc/os-release 2>/dev/null || true
 OSID=${ID:-desconocido}
 if command -v apt-get >/dev/null; then PM=apt
 elif command -v dnf >/dev/null; then PM=dnf
-else die "Se requiere apt (Debian/Ubuntu) o dnf (RHEL/Rocky/Alma/Fedora)."; fi
-echo "Sistema: ${PRETTY_NAME:-$OSID} (gestor de paquetes: $PM)"
+else die "For (Debian/Ubuntu) apt is required or dnf (RHEL/Rocky/Alma/Fedora)."; fi
+echo "${BLUE}System: ${PRETTY_NAME:-$OSID} (${BLUE}package managers: $PM)"
 
-say 1/7 "Comprobando kernel y BTF"
+say 1/7 "${CYAN} Checks kernel y BTF"
 command -v getenforce >/dev/null && echo "SELinux: $(getenforce)"
-[[ -f /sys/kernel/btf/vmlinux ]] || die "Falta /sys/kernel/btf/vmlinux: modern_ebpf no funcionará (kernel $(uname -r)). Usa un kernel >= 5.8 con BTF."
+[[ -f /sys/kernel/btf/vmlinux ]] || die "${RED} WARNING [!] /sys/kernel/btf/vmlinux: modern_ebpf won't work (kernel $(uname -r)). A kernerl >= 5.8 with BTF is needed."
 
-say 2/7 "Instalando dependencias base"
+say 2/7 "${BLUE} Installing base dependencies"
 if [[ $PM == apt ]]; then
   apt-get update -qq
   $APT ca-certificates curl gnupg openssl python3 python3-venv
 else
-  # En RHEL ya suele haber curl-minimal: no se reinstala curl para evitar conflictos de paquetes
+  # In RHEL, "curl-minimal" usually is present; "curl" is not reinstalled, to avoid package conflicts.
   command -v curl >/dev/null    || dnf install -y curl
   command -v openssl >/dev/null || dnf install -y openssl
   dnf install -y ca-certificates
@@ -51,16 +60,16 @@ pick_python() {
   done
   return 1
 }
-if ! pick_python && [[ $PM == dnf ]]; then   # p. ej. RHEL 8 trae Python 3.6 por defecto
+if ! pick_python && [[ $PM == dnf ]]; then   # p. ej. RHEL 8 has Python 3.6 by default
   dnf install -y python3.11 python3.11-pip || dnf install -y python3.12 python3.12-pip || true
   pick_python || true
 fi
-[[ -n "$PYBIN" ]] || die "Se requiere Python >= 3.9 (en RHEL/Rocky: dnf install python3.11 python3.11-pip)."
+[[ -n "$PYBIN" ]] || die "${RED} WARNING: Python >= 3.9 is required (in RHEL/Rocky: dnf install python3.11 python3.11-pip)."
 echo "Python: $PYBIN ($($PYBIN -V))"
 
-say 3/7 "Verificando Docker"
+say 3/7 "${BLUE} Docker Verification"
 if command -v docker >/dev/null && docker version 2>&1 | grep -qi podman; then
-  die "Se detectó Podman (emulador podman-docker). falco-guard necesita Docker Engine real. Ejecuta: dnf remove -y podman-docker  y repite la instalación."
+  die "${RED} CRITICAL [!] PODMAN DETECTED (EMULATOR podman-docker). falco-guard needs Docker Engine. Execute: dnf remove -y podman-docker  and repeat the installation."
 fi
 if ! command -v docker >/dev/null; then
   if [[ $PM == apt ]]; then
@@ -68,9 +77,9 @@ if ! command -v docker >/dev/null; then
   else
     MAJOR=${VERSION_ID:-0}; MAJOR=${MAJOR%%.*}
     if [[ $OSID == fedora ]]; then REPOS="fedora"
-    elif [[ $MAJOR -ge 10 ]]; then REPOS="rhel centos"   # EL10: Docker documenta 'rhel'; 'centos' también se reporta válido
+    elif [[ $MAJOR -ge 10 ]]; then REPOS="rhel centos"   # EL10: Docker documents 'rhel'; 'centos' also valid
     else REPOS="centos rhel"; fi
-    # EL10 mínimo necesita módulos de kernel extra para la red de Docker (puede requerir reinicio)
+    #EL10 requires additional kernel modules for Docker networking (a reboot may be necessary).
     if [[ $OSID != fedora && $MAJOR -ge 10 ]]; then
       dnf install -y "kernel-modules-extra-$(uname -r)" || dnf install -y kernel-modules-extra || true
     fi
@@ -78,13 +87,13 @@ if ! command -v docker >/dev/null; then
     for DREPO in $REPOS; do
       curl -fsSL "https://download.docker.com/linux/$DREPO/docker-ce.repo" -o /etc/yum.repos.d/docker-ce.repo || continue
       if dnf install -y docker-ce docker-ce-cli containerd.io; then DOCKER_OK=true; break; fi
-      rm -f /etc/yum.repos.d/docker-ce.repo     # ese repo no sirvió: se prueba el siguiente
+      rm -f /etc/yum.repos.d/docker-ce.repo     # That repo didn't work; let's try the next one.
     done
-    $DOCKER_OK || die "No se pudo instalar Docker (¿conflicto con podman/runc?). Revisa y, si procede: dnf install --allowerasing docker-ce docker-ce-cli containerd.io"
+    $DOCKER_OK || die "${YELLOW} Docker could not be installed (conflict with podman/runc?). Check and, if applicable: dnf install --allowerasing docker-ce docker-ce-cli containerd.io"
   fi
 fi
 systemctl enable --now docker
-docker info >/dev/null 2>&1 || die "El demonio de Docker no responde (systemctl status docker). En Rocky/RHEL 10 reinicia la máquina tras instalar kernel-modules-extra y repite el instalador."
+docker info >/dev/null 2>&1 || die "${RED}The Docker daemon is not responding (systemctl status docker).On Rocky/RHEL 10, reboot the machine after installing kernel-modules-extra and run the installer again.."
 
 say 4/7 "Instalando Falco (repositorio oficial)"
 if ! command -v falco >/dev/null && [[ $PM == apt ]]; then
@@ -97,15 +106,15 @@ fi
 if ! command -v falco >/dev/null && [[ $PM == dnf ]]; then
   rpm --import https://falco.org/repo/falcosecurity-packages.asc
   curl -fsSL https://falco.org/repo/falcosecurity-rpm.repo -o /etc/yum.repos.d/falcosecurity.repo
-  dnf install -y falco        # modern_ebpf no necesita dkms ni kernel-devel
+  dnf install -y falco        # modern_ebpf does not need dkms or kernel-devel
 fi
 
-say 5/7 "Desplegando falco-guard en /opt/falco-guard"
+say 5/7 "Deploying falco tool in /opt/falco-guard"
 mkdir -p /opt/falco-guard/guard /opt/falco-guard/config /var/lib/falco-guard /etc/falco/rules.d /etc/falco/config.d
 cd /opt/falco-guard
 : > /opt/falco-guard/guard/__init__.py
 cat > /opt/falco-guard/guard/policy.py <<'__GUARD_EOF__'
-"""Motor de decisión: ¿ignorar, alertar o aislar?"""
+"""Decision Engine: ¿ignore, alert or isolate?"""
 import threading
 import time
 from collections import defaultdict, deque
@@ -143,16 +152,16 @@ class PolicyEngine:
         f = event.get("output_fields") or {}
         cid = f.get("container.id")
         if not cid or cid == "host":
-            return Decision("ignore", "evento fuera de un contenedor")
+            return Decision("ignore", "event outside a container")
         if self._allowlisted(f):
-            return Decision("ignore", "contenedor en allowlist")
+            return Decision("ignore", "container in allowlist")
 
         rule = event.get("rule", "")
         rcfg = (self.cfg.get("rules") or {}).get(rule)
         if rcfg is None:
-            return Decision("alert", "regla sin política: solo alerta")
+            return Decision("alert", "rule without policy: alert only")
         if rcfg.get("action") == "isolate":
-            return Decision("isolate", f"regla crítica: {rule}")
+            return Decision("isolate", f"Critical: {rule}")
 
         n, window = rcfg.get("escalate_after"), rcfg.get("window", 60)
         if n:
@@ -164,11 +173,11 @@ class PolicyEngine:
                     q.popleft()
                 if len(q) >= n:
                     q.clear()
-                    return Decision("isolate", f"{n} eventos de '{rule}' en {window}s")
-        return Decision("alert", "solo alerta")
+                    return Decision("isolate", f"{n} events of '{rule}' in {window}s")
+        return Decision("alert", "just alert")
 __GUARD_EOF__
 cat > /opt/falco-guard/guard/isolator.py <<'__GUARD_EOF__'
-"""Aislamiento de contenedores vía Docker SDK (con evidencia forense y reversión)."""
+"""Container isolation via Docker SDK (with forensic evidence and reversion)."""
 import json
 import logging
 import os
@@ -212,7 +221,7 @@ class Isolator:
 
     def _forensics(self, c) -> str:
         attrs = json.loads(json.dumps(c.attrs))
-        # Redactar valores de variables de entorno (pueden contener secretos)
+        # Redact environment variable values ​​(which may contain secrets)
         attrs["Config"]["Env"] = [e.split("=", 1)[0] + "=<redacted>" for e in attrs["Config"].get("Env") or []]
         data = {"inspect": attrs, "fs_diff": c.diff()}
         if c.status == "running":
@@ -231,13 +240,13 @@ class Isolator:
             nets = list(c.attrs["NetworkSettings"]["Networks"])
             host_net = c.attrs["HostConfig"]["NetworkMode"] == "host"
             steps = list(self.steps)
-            # Con network_mode=host no se puede desconectar la red: se congela el contenedor.
+            # With network_mode=host, the network cannot be disconnected: the container freezes.
             if host_net and "pause" not in steps and "stop" not in steps:
                 steps.append("pause")
             if self.dry_run:
                 return {"status": "dry_run", "container": c.name, "would_do": steps}
 
-            forensics = self._forensics(c)  # primero la evidencia
+            forensics = self._forensics(c)  # first the evidence
             done = []
             for step in steps:
                 if step == "network" and not host_net:
@@ -308,9 +317,9 @@ class Notifier:
 
         icon = "🔒" if decision.action == "isolate" else "🚨"
         text = (f"{icon} *{alert['rule']}* ({alert['priority']})\n"
-                f"Contenedor: `{alert['container']}` ({alert['image']})\n"
-                f"Detalle: `{alert['file'] or alert['cmd']}`\n"
-                f"Acción: *{decision.action}* — {decision.reason}")
+                f"Container: `{alert['container']}` ({alert['image']})\n"
+                f"Details: `{alert['file'] or alert['cmd']}`\n"
+                f"Action: *{decision.action}* — {decision.reason}")
         for url, payload in ((self.slack_url, {"text": text}), (self.webhook_url, alert)):
             if url:
                 try:
@@ -319,7 +328,7 @@ class Notifier:
                     log.error("Fallo al notificar: %s", e)
 __GUARD_EOF__
 cat > /opt/falco-guard/guard/main.py <<'__GUARD_EOF__'
-"""Receptor de eventos Falco -> decisión -> alerta/aislamiento."""
+"""Falco event receiver -> decision -> alert/isolation."""
 import hmac
 import logging
 import os
@@ -348,7 +357,7 @@ app = FastAPI(title="falco-guard")
 
 def _auth(token, header):
     if TOKEN and not hmac.compare_digest((token or header or ""), TOKEN):
-        raise HTTPException(401, "token inválido")
+        raise HTTPException(401, "token no valid")
 
 
 @app.post("/falco")
@@ -363,8 +372,8 @@ def falco_event(event: dict, token: Optional[str] = Query(None), x_guard_token: 
         cid = event["output_fields"]["container.id"]
         try:
             result = isolator.isolate(cid, decision.reason)
-        except Exception as e:  # nunca perder la alerta por un fallo del aislamiento
-            logging.exception("Fallo al aislar %s", cid)
+        except Exception as e:  # never miss an alert
+            logging.exception("Failure at isolating %s", cid)
             result = {"status": "error", "error": str(e)}
     notifier.send(event, decision, result)
     return {"decision": decision.action, "reason": decision.reason, "isolation": result}
@@ -387,13 +396,13 @@ def release(cid: str, token: Optional[str] = Query(None), x_guard_token: Optiona
     return isolator.release(cid)
 __GUARD_EOF__
 POLICY_DST=/opt/falco-guard/config/policy.yaml
-if [ -f "$POLICY_DST" ]; then POLICY_DST="$POLICY_DST.new"; echo "[i] policy.yaml existente conservado; la versión nueva queda en $POLICY_DST"; fi
+if [ -f "$POLICY_DST" ]; then POLICY_DST="$POLICY_DST.new"; echo "[i] policy.yaml is conserved; the newest version is in $POLICY_DST"; fi
 cat > "$POLICY_DST" <<'__GUARD_EOF__'
-# Política de respuesta de falco-guard
-dry_run: false            # true = solo registra qué aislaría
-isolation: [network, pause]   # pasos: network (desconecta redes) | pause (congela) | stop
+# Response politics
+dry_run: false            # true = just register what isolate
+isolation: [network, pause]   # pasos: network (disconnect the network) | pause (freeze) | stop
 
-allowlist:                # nunca se alerta ni se aísla
+allowlist:                # no alert or isolation
   container_names: [falco, falco-guard]
   image_prefixes: ["falcosecurity/"]
 
@@ -402,61 +411,61 @@ rules:
   "Container Escape Artifact Write":     {action: isolate}
   "Container Accessing Container Runtime Socket": {action: isolate}
   "Escape Tool Executed In Container":   {action: isolate}
-  "Mount Syscall In Container":          {action: alert}   # sin escalado hasta validar ruido de runc
+  "Mount Syscall In Container":          {action: alert}   # no scaltion until check if its noise
   "Interactive Shell Spawned In Container": {action: alert}
 __GUARD_EOF__
 cat > /etc/falco/rules.d/guard_rules.yaml <<'__GUARD_EOF__'
-# Reglas Falco (>= 0.38) para detectar comportamiento sospechoso en contenedores
+# Falco rules (>= 0.38) to detect suspicious actions 
 - macro: guard_open
   condition: (evt.type in (open, openat, openat2) and fd.num >= 0)
 - macro: guard_spawn
   condition: (evt.type in (execve, execveat) and evt.dir = <)
 - macro: guard_trusted
   condition: (container.image.repository in (falcosecurity/falco, falco-guard))
-# Arranque de contenedores: runc abre el rootfs en /var/lib/docker/rootfs/overlayfs/ (ruido, no ataque).
-# Excepción estrecha: solo ese par proceso+ruta. El resto de /var/lib/docker/ sigue vigilado.
+# Container startup: runc opens the rootfs at /var/lib/docker/rootfs/overlayfs/ (noise, not an attack).
+# Narrow exception: only that specific process+path pair. The rest of /var/lib/docker/ remains monitored.
 - macro: guard_runc_startup
   condition: (proc.name startswith "runc:" and fd.name startswith /var/lib/docker/rootfs/overlayfs/)
 
 - rule: Container Accessing Host Filesystem
-  desc: Un contenedor abre archivos de rutas del host (bind mounts de / , /proc/1/root, runtime dirs)
+  desc:A container opens host path filest (bind mounts de / , /proc/1/root, runtime dirs)
   condition: >
     guard_open and container.id != host and not guard_trusted and not guard_runc_startup and
     (fd.name startswith /host/ or fd.name startswith /hostfs/ or
      fd.name startswith /proc/1/root or fd.name startswith /var/lib/kubelet/ or
      fd.name startswith /var/lib/docker/ or fd.name startswith /var/lib/containerd/)
   output: >
-    Acceso al filesystem del host (file=%fd.name proc=%proc.cmdline user=%user.name
+    Access to the host filesystem (file=%fd.name proc=%proc.cmdline user=%user.name
     container=%container.name image=%container.image.repository:%container.image.tag id=%container.id)
   priority: CRITICAL
   tags: [container, host_fs, guard]
 
 - rule: Container Escape Artifact Write
-  desc: Escritura en artefactos típicos de escape (cgroup release_agent, core_pattern, modprobe)
+  desc: : Writing to typical escape artifacts (cgroup release_agent, core_pattern, modprobe)
   condition: >
     evt.type in (open, openat, openat2) and evt.is_open_write = true and
     container.id != host and not guard_trusted and
     (fd.name endswith release_agent or fd.name = /proc/sys/kernel/core_pattern or
      fd.name = /proc/sys/kernel/modprobe or fd.name = /sys/kernel/uevent_helper)
   output: >
-    Posible escape de contenedor (file=%fd.name proc=%proc.cmdline container=%container.name id=%container.id)
+    Posible container scape (file=%fd.name proc=%proc.cmdline container=%container.name id=%container.id)
   priority: CRITICAL
   tags: [container, escape, guard]
 
 - rule: Container Accessing Container Runtime Socket
-  desc: Un contenedor abre/conecta al socket de Docker/containerd/CRI-O
+  desc: A container opens/connects to the Docker/containerd/CRI-O socket.
   condition: >
     (guard_open or (evt.type = connect and evt.dir = <)) and container.id != host and
     not guard_trusted and
     (fd.name contains docker.sock or fd.name contains containerd.sock or fd.name contains crio.sock)
   output: >
-    Acceso al socket del runtime (sock=%fd.name proc=%proc.cmdline container=%container.name
+   Acces to the runtime socket (sock=%fd.name proc=%proc.cmdline container=%container.name
     image=%container.image.repository id=%container.id)
   priority: CRITICAL
   tags: [container, runtime_socket, guard]
 
 - rule: Escape Tool Executed In Container
-  desc: nsenter ejecutado dentro de un contenedor
+  desc: nsenter executed inside a container
   condition: guard_spawn and container.id != host and not guard_trusted and proc.name = nsenter
   output: >
     nsenter en contenedor (cmd=%proc.cmdline container=%container.name id=%container.id)
@@ -464,10 +473,10 @@ cat > /etc/falco/rules.d/guard_rules.yaml <<'__GUARD_EOF__'
   tags: [container, escape, guard]
 
 - rule: Mount Syscall In Container
-  desc: Llamada mount() desde un contenedor
+  desc: Llamada mount() from a contenedor
   condition: evt.type = mount and evt.dir = < and container.id != host and not guard_trusted and not proc.name startswith "runc:"
   output: >
-    mount() en contenedor (args=%evt.args proc=%proc.cmdline container=%container.name id=%container.id)
+    mount() in container (args=%evt.args proc=%proc.cmdline container=%container.name id=%container.id)
   priority: WARNING
   tags: [container, mount, guard]
 
