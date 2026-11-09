@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 #==============================================================================
-set -euo pipefail
+#Bash shell option that changes pipeline behaviour so the pipeline fails if any command in the chain fails.
+set -euo pipefail 
+#Colors to alerts or any warning during the installation
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 BLUE='\033[0;34m'
@@ -8,6 +10,8 @@ YELLOW='\033[1;33m'
 CYAN='\033[0;36m'
 NC='\033[0m'
 
+#It verifies that we execute with sudo because the program edit and create files. 
+#If we include --enforce the isolation feature is included
 [[ $EUID -eq 0 ]] || { echo -e "${RED}[!] Execute as root with sudo.${NC}"; exit 1; }
 DETECTION=true; [[ "${1:-}" == "--enforce" ]] && DETECTION=false
 
@@ -28,20 +32,26 @@ APT_KEYRING=/etc/apt/keyrings/verify_repo_install.gpg
 say() { echo -e "\033[0;34m[$1]\033[0m $2"; }
 die() { echo -e "\033[0;31m[!] $1\033[0m" >&2; exit 1; }
 
-say Step 1 "${BLUE} Validating kernel and BTF${NC}"
-[[ -f /sys/kernel/btf/vmlinux ]] || die "${YELLOW} Missing /sys/kernel/btf/vmlinux: modern_ebpf won't work (kernel $(uname -r)). Please use a kernel >= 5.8 with BTF."
+#DIE: shows a message with the error and stops the intallation
+say Step 1 of 7 "${BLUE} Validating kernel and BTF${NC}"
+[[ -f /sys/kernel/btf/vmlinux ]] || die "${YELLOW} Missing /sys/kernel/btf/vmlinux: modern_ebpf won't work (kernel $(uname -r))."
+#--------------------------------
 
-say 2/7 "${BLUE}Installing dependencies${NC}"
+say Step 2 of 7 "${BLUE}Installing dependencies${NC}"
 command -v apt-get >/dev/null || die "${RED}CRITICAL: This installer only supports Debian/Ubuntu (apt)."
 apt-get update -qq
 $APT ca-certificates curl gnupg openssl python3 python3-venv
 python3 -c 'import sys; sys.exit(0 if sys.version_info >= (3,10) else 1)' || die "${YELLOW}Python >= 3.10 is required (you have $(python3 -V))."
 
-say 3/7 "${BLUE}Verifying Docker${NC}"
+#----------------------------------------
+
+say Step 3 of 7 "${BLUE}Verifying Docker${NC}"
 if ! command -v docker >/dev/null; then
   curl -fsSL https://get.docker.com | sh
 fi
 systemctl enable --now docker
+#------------------------------------------
+#Verifies if falco is installed, if so then this step is skipped 
 
 say 4/7 "${BLUE}Installing Falco (official repository)${NC}"
 if ! command -v falco >/dev/null; then
@@ -51,12 +61,15 @@ if ! command -v falco >/dev/null; then
   apt-get update -qq
   $APT falco
 fi
+#----------------------------------------------------------------
 
-say 5/7 "${BLUE}Deploying Sentinel_Falco in $INSTALL_DIR${NC}"
+say Step 5 of 7 "${BLUE}Deploying Sentinel_Falco in $INSTALL_DIR${NC}"
+#creates directories: alert, policies, information of containers isolated,falco configuration
+#prepare dependencies to deploy the rules
 mkdir -p "$INSTALL_DIR/guard" "$INSTALL_DIR/config" "$DATA_DIR" "$FORENSICS_DIR" /etc/falco/rules.d /etc/falco/config.d
 cd "$INSTALL_DIR"
 : > "$INSTALL_DIR/guard/__init__.py"
-cat > "$INSTALL_DIR/guard/policy.py" <<'__GUARD_EOF__'
+cat > "$INSTALL_DIR/guard/policy.py" <<'__GUARD_EOF__' 
 """Decision engine: ignore, alert or isolate?"""
 import threading
 import time
@@ -435,11 +448,13 @@ cat > "$FALCO_RULES" <<'__GUARD_EOF__'
 __GUARD_EOF__
 #---------------------------------------
 
+#Creates a library separate from the Ubuntu one, to avoid conflicts between versions
 python3 -m venv "$INSTALL_DIR/venv"
 "$INSTALL_DIR/venv/bin/pip" install -q --upgrade pip
 "$INSTALL_DIR/venv/bin/pip" install -q "fastapi==0.115.*" "uvicorn[standard]==0.32.*" "docker==7.1.*" "PyYAML==6.0.*" "requests==2.32.*"
 
-say 6/7 "${BLUE}Configuring token and Falco HTTP output${NC}"
+#---------------------------------------------------------------
+say Step 6 of 7 "${BLUE}Configuring token and Falco HTTP output${NC}"
 if [[ -f /etc/falco-guard.env ]]; then
   # Reinstall: keep the token, SLACK_WEBHOOK_URL and the mode (the mode only changes with --enforce)
   TOKEN=$(grep '^GUARD_TOKEN=' /etc/falco-guard.env | cut -d= -f2)
