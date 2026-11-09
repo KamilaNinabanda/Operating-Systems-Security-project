@@ -1,7 +1,0 @@
-#----------main folder
-falco/
-├── falco_sentinel.py           # daemon in Python (controls Docker and webhooks)
-├── falco_rules.local.yaml      # eBPF rules (filesystem, socket docker, shells)
-├── falco.yaml                  # Configuration with driver modern_ebpf and HTTP output
-├── install.sh                  # Automated installer for local
-├── test_suite.py               # Test to verify that main 5 functions are up
