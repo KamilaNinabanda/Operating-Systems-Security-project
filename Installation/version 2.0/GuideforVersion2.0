@@ -2,29 +2,27 @@
 
 --------------------------------------------------------------------------------------
 ---------------------------Define path to install-------------------------------------
-sudo mkdir -p /opt/falco-sentinel
+sudo mkdir -p /opt/oss
 
--------------------------------------------------------------------------------------------------------------------------
-Installation of Docker  (optional)
---------------------------------------------------------------------------------------------------------------------------
-sudo apt update && sudo apt install -y python3-pip python3-venv curl apt-transport-https ca-certificates gnupg
-sudo apt-get update && sudo apt-get install -y python3-docker python3-flask
-sudo apt install -y docker.io
-sudo systemctl enable --now docker
-sudo usermod -aG docker $USER
---------------------------------------------------------------------------------------------------------------------------
+---------------Permissions-------------------------------------------
+chmod +x install_sentinel_falco_ubuntu.sh       
+sudo ./install_sentinel_falco_ubuntu.sh          # mode DRY_RUN (best option for 1st installation)
 
----------------------------------------------------------------------------------------------------------------------------
-INSTALL OF THE SOURCE CODE
----------------------------------------------------------------------------------------------------------------------------
-cd /opt/falco-sentinel
-sudo chmod +x ./install.sh
-sudo bash install.sh
+#if prefer to include directly the isolation
+sudo ./install_sentinel_falco.sh --enforce
 
---------------------------------------------------------------------------------------------------------------------------
+---------------TEST---------------------------------
+create a mini lab to test 
 
----------------------------------------------------------------------------------------------------------------------------
-PERFORM THE TEST
----------------------------------------------------------------------------------------------------------------------------
+   docker run -d --name victim -v /:/host alpine sleep 3600
+   docker exec victim cat /host/etc/hostname
+   tail -n 3 /var/lib/Sentinel_Falco/alerts.jsonl
 
-python3 -m unittest test_suite.py
+   sudo sed -i 's/GUARD_DRY_RUN=true/GUARD_DRY_RUN=false/' /etc/falco-guard.env
+   sudo systemctl restart falco-guard
+
+   curl -H "X-Guard-Token: $TOKEN" localhost:8080/isolated_container
+   curl -X POST -H "X-Guard-Token: $TOKEN" localhost:8080/release/<name>
+
+to check the logs 
+journalctl -u falco-guard -f
