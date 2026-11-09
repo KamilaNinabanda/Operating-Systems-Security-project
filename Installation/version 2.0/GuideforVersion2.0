@@ -9,7 +9,6 @@ execute test
    docker exec victim cat /host/etc/hostname
    tail -n 3 /var/lib/Sentinel_Falco/alerts.jsonl
 
-   sudo sed -i 's/GUARD_DRY_RUN=true/GUARD_DRY_RUN=false/' /etc/falco-guard.env
    sudo systemctl restart falco-guard
 
 To check the logs 
