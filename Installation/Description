@@ -1,19 +1,53 @@
 SOLUTION
+==========================================
+What does the program until now 
+==========================================
+Falco: It monitors the system activities and detects behaviors that match the security rules that we defined. 
+       It is configured using the modern eBPF engine and generates events in JSON format.
 
-RULES AND ACTIONS
-Container Accessing Host Filesystem: access to host files 
-                                      ISOLATION
-Container Escape: Writes in files related to possible escapes 
-                                      ISOLATION
-Accessing Container Runtime Socket: Access to docker socket or containerd 
-                                      ISOLATION
-Escape Tool Executed: when nsenter is executed 
-                                      ISOLATION
-Mount Syscall: execution of mount calls 
-                                      ALERT
-Interactive Shell Spawned Interactive terminal opened 
-                                        ALERT
+Policies (policy.py): It receives the events and determines the action based on configured rules.
+The main categories for response are ignore,alerts, or isolates a container.
 
+Isolation (isolation_recovery_container.py): Takes actions on containers using the Docker SDK. 
+It allows  disconnecting their networks, pausing their execution, or even stopping, as well as their recovery.
+
+Notification Module (notification_alerter.py): Logs incidents into JSONL files and enables the sending 
+of notifications to external services via Webhooks.
+
+Main API (Main_alert_falco.py): Developed using FastAPI, it receives events sent by Falco, 
+performs token-based authentication, and coordinates the policy engine, container isolation, and notifications.
+
+============================================
+RULES
+============================================
+The events that triggers the rules are the following 
+Unauthorized access to the host file system.
+
+Modification of files related to container escapes.
+Access to Docker sockets and other runtime services.
+Execution of `nsenter` commands within containers.
+Detection of system calls related to mount operations.
+Identification of interactive shell sessions.
+
+NOTE: A scaling mechanism based on the number of events detected within a time interval is also included.
+
+===============================================
+ISOLATION
+==============================================
+
+Pause its execution to prevent it from continuing to carry out suspicious activities.
+Stop the container.
+Preserve the information before applying isolation (Gathers data about the container)
+Subsequently recover the container, restoring its execution state and network connections based on the actions taken.
+
+==============================================
+REGISTER/LOGS
+=============================================
+Before the isolation happens, the system collects information such as its configuration attributes, file system differences,
+active processes, and recent logs. Sensitive variables are partially masked to avoid the direct storage of passwords or tokens.
+
+==============================================
 OPTIONS OF FUNCTIONING 
+==============================================
 DETECTION_MODE: simulation mode. just to detect and alert
 ENFORCE: it includes isolation
