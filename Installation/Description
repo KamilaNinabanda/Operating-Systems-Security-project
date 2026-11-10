@@ -66,3 +66,8 @@ OPTIONS OF FUNCTIONING
 ==============================================
 DETECTION_MODE: simulation mode. just to detect and alert
 ENFORCE: it includes isolation
+
+
+---------------------------------------------
+FALCO INSTALL: https://www.skynats.com/blog/falco-installation-on-ubuntu/
+HOW FALCO WORKS: https://oneuptime.com/blog/post/2026-01-27-falco-runtime-security/view
