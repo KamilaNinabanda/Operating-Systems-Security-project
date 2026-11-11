@@ -57,7 +57,7 @@ systemctl enable --now docker
 #------------------------------------------
 #Verifies if falco is installed, if so then this step is skipped 
 
-say "Step 4 of 7""${BLUE}Installing Falco (official repository)${NC}"
+say "Step 4 of 7" "${BLUE}Installing Falco (official repository)${NC}"
 if ! command -v falco >/dev/null; then
   mkdir -p /etc/apt/keyrings
   curl -fsSL https://falco.org/repo/falcosecurity-packages.asc | gpg --dearmor --yes -o "$APT_KEYRING"
