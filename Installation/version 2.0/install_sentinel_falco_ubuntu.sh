@@ -474,7 +474,7 @@ EOC
 
 say "Step 7 of 7""${CYAN}Validating rules and starting services${NC}"
 if falco -V /etc/falco/falco_rules.yaml -V "$FALCO_RULES"; then
-    say "OK" "Falco rules are valid and ready."
+    say "OK" "${GREEN} Falco rules are valid and ready."
 else
     die "Falco rule validation failed. Check the errors above."
 fi
