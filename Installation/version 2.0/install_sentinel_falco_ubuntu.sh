@@ -397,7 +397,7 @@ cat > "$FALCO_RULES" <<'__GUARD_EOF__'
 
 - rule: Mount Detection
   desc: mount() call from a container
-  condition: evt.type = mount and evt.dir = < and container.id != host and not guard_trusted and not proc.name startswith "runc:"
+  condition: evt.type = mount and container.id != host and not guard_trusted and not proc.name startswith "runc:"
   output: >
     mount() in container (args=%evt.args proc=%proc.cmdline container=%container.name id=%container.id)
   priority: WARNING
