@@ -91,21 +91,11 @@ class Policies:
         with open(path) as f:
             return cls(yaml.safe_load(f) or {})
 
-    def _allowlisted(self, f: dict) -> bool:
-        al = self.cfg.get("allowlist", {})
-        name = f.get("container.name") or ""
-        image = f.get("container.image.repository") or ""
-        return name in al.get("container_names", []) or any(
-            image.startswith(p) for p in al.get("image_prefixes", [])
-        )
-
     def decide(self, event: dict) -> DecisionActions:
         f = event.get("output_fields") or {}
         cid = f.get("container.id")
         if not cid or cid == "host":
             return DecisionActions("ignore", "event outside a container")
-        if self._allowlisted(f):
-            return DecisionActions("ignore", "container is in allowlist")
 
         rule = event.get("rule", "")
         configrule = (self.cfg.get("rules") or {}).get(rule)
@@ -117,7 +107,7 @@ class Policies:
         return DecisionActions("alert", "alert only")
 __GUARD_EOF__
 cat > "$INSTALL_DIR/guard/isolation_recovery_container.py" <<'__GUARD_EOF__'
-"""Executes container isolation and recovery via Docker SDK"""
+"""Executes container isolation and recovery via Docker SDK (with forensic evidence and rollback)."""
 import json
 import logging
 import os
@@ -187,7 +177,7 @@ class ContainerIsolation:
             if self.detection_mode:
                 return {"status": "detection_mode", "container": c.name, "would_do": steps}
 
-            forensics = self._gatherInfo(c)  # collect information of the container
+            forensics = self._gatherInfo(c)  # collect evidence first
             done = []
             for step in steps:
                 if step == "network" and not host_net:
@@ -342,16 +332,12 @@ cat > "$POLICY_DST" <<'__GUARD_EOF__'
 detection_mode: false            # true = detection mode: detect and alert only, never isolate
 isolation: [network, pause]   # steps: network (disconnect from networks) | pause (freeze) | stop
 
-allowlist:                # never alert or isolate these
-  container_names: [falco, falco-guard]
-  image_prefixes: ["falcosecurity/"]
-
 rules:
   "Host Filesystem non Authorized":   {action: isolate}
   "File Modification Escape Attempt":  {action: isolate}
   "Runtime Socket non Authorized":    {action: isolate}
   "NSENTER Execution":                {action: isolate}
-  "Mount Detection":                  {action: alert}   
+  "Mount Detection":                  {action: alert}   # no escalation until runc noise is validated
   "Interactive Shell Active":         {action: alert}
 __GUARD_EOF__
 cat > "$FALCO_RULES" <<'__GUARD_EOF__'
@@ -503,7 +489,7 @@ systemctl is-active --quiet falco-modern-bpf || die "${RED}Falco could not start
 cat <<EOM
 
 ===========================================================================================================================
- Sentinel_Falco installed. Mode: $([[ $DETECTION == true ]] && echo "DETECTION_MODE (detects and alerts only, no isolation)" || echo "ENFORCE (isolation)")
+ Sentinel_Falco installed. Mode: $([[ $DETECTION == true ]] && echo "DETECTION_MODE (detects and alerts only, no isolation)" || echo "ENFORCE (real isolation)")
 =============================================================================================================================
  Token (saved in /etc/falco-guard.env): $TOKEN
 
