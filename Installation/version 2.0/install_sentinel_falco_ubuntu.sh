@@ -24,9 +24,13 @@ APT="apt-get install -y -qq -o Dpkg::Options::=--force-confold"
 # --- Paths ---
 INSTALL_DIR=/opt/Sentinel_Falco
 DATA_DIR=/var/lib/Sentinel_Falco
-COLLECT_INFO=$DATA_DIR/AUDIT
-chown root:root "$DATA_DIR/AUDIT"
-chmod 700 "$DATA_DIR/AUDIT"
+COLLECT_INFO="$DATA_DIR/AUDIT"
+
+# Create and protect sensitive data about the collection of info
+mkdir -p "$COLLECT_INFO"
+chown root:root "$COLLECT_INFO"
+chmod 700 "$COLLECT_INFO"
+
 FALCO_CONFIG=/etc/falco/config.d/configfalco.yaml
 FALCO_RULES=/etc/falco/rules.d/rules_detection_falco.yaml
 POLICY_NAME=policy_rules_defined.yaml
@@ -60,14 +64,12 @@ command -v docker >/dev/null 2>&1 \
 
 # Docker daemon must be running.
 systemctl is-active --quiet docker \
-    || die "$[YELLOW] WARNING: Docker service is not running. Start it with: sudo systemctl start docker"
-
+    || die "${YELLOW}WARNING: Docker service is not running. Start it with: sudo systemctl start docker."
 # Verify that the daemon responds.
 docker info >/dev/null 2>&1 \
     || die "${RED} [!] Cannot communicate with Docker daemon. Check Docker service status."
 
 say "VALIDATED" "${GREEN}Docker is installed and functional.${NC}"
-
 #------------------------------------------
 #Verifies if falco is installed, if so then this step is skipped 
 
@@ -75,6 +77,7 @@ say "Step 4 of 7" "${BLUE}Installing Falco (official repository)${NC}"
 if ! command -v falco >/dev/null; then
   mkdir -p /etc/apt/keyrings
   curl -fsSL https://falco.org/repo/falcosecurity-packages.asc | gpg --dearmor --yes -o "$APT_KEYRING"
+  chmod 644 "$APT_KEYRING"   # apt verifies it as user _apt: it must be world-readable (umask is 077)
   echo "deb [signed-by=$APT_KEYRING] https://download.falco.org/packages/deb stable main" > /etc/apt/sources.list.d/falcosecurity.list
   apt-get update -qq
   $APT falco
@@ -178,7 +181,7 @@ class ContainerIsolation:
         collectedinfo["logs_tail"] = c.logs(tail=200).decode(errors="replace")
         path = os.path.join(self.collect_info, f"{c.name}-{int(time.time())}.json")
         with open(path, "w") as f:
-          json.dump(collectedinfo, f, indent=2, default=str)
+            json.dump(collectedinfo, f, indent=2, default=str)
         os.chmod(path, 0o600)
         return path
 
@@ -303,6 +306,7 @@ notifier = Notificationalert(os.path.join(DATA, "alerts.jsonl"),
 
 app = FastAPI(title="Sentinel_Falco")
 
+
 def _auth(token, header):
     # Reject requests when there is not a configured token.
     if not TOKEN:
@@ -375,7 +379,7 @@ rules:
   "File Modification Escape Attempt":  {action: isolate}
   "Runtime Socket non Authorized":    {action: isolate}
   "NSENTER Execution":                {action: isolate}
-  "Mount Detection":                  {action: alert}   
+  "Mount Detection":                  {action: alert}
   "Interactive Shell Active":         {action: alert}
 __GUARD_EOF__
 cat > "$FALCO_RULES" <<'__GUARD_EOF__'
@@ -418,7 +422,10 @@ cat > "$FALCO_RULES" <<'__GUARD_EOF__'
 
 - rule: Runtime Socket non Authorized
   desc: A container opens/connects to the Docker/containerd/CRI-O socket
-  condition: evt.type = mount and container.id != host and not guard_trusted and not proc.name startswith "runc:"
+  condition: >
+    (guard_open or (evt.type = connect and evt.dir = <)) and container.id != host and
+    not guard_trusted and
+    (fd.name contains docker.sock or fd.name contains containerd.sock or fd.name contains crio.sock)
   output: >
     Access to the runtime socket (sock=%fd.name proc=%proc.cmdline container=%container.name
     image=%container.image.repository id=%container.id)
@@ -459,7 +466,6 @@ python3 -m venv "$INSTALL_DIR/venv"
 "$INSTALL_DIR/venv/bin/pip" install -q "fastapi==0.115.*" "uvicorn[standard]==0.32.*" "docker==7.1.*" "PyYAML==6.0.*" "requests==2.32.*"
 
 #---------------------------------------------------------------
-
 say "Step 6 of 7" "${BLUE}Configuring token and Falco HTTP output${NC}"
 
 ENV_FILE="/etc/falco-guard.env"
@@ -524,6 +530,7 @@ Requires=docker.service
 
 [Service]
 User=root
+UMask=0077
 WorkingDirectory=$INSTALL_DIR
 EnvironmentFile=/etc/falco-guard.env
 Environment=GUARD_POLICY=$INSTALL_DIR/config/$POLICY_NAME GUARD_DATA=$DATA_DIR
@@ -535,26 +542,6 @@ RestartSec=3
 WantedBy=multi-user.target
 EOC
 
-#---------------------------------------------
-cat > /etc/systemd/system/falco-guard.service <<EOC
-[Unit]
-Description=Sentinel_Falco: alerts and automatic isolation of containers
-After=docker.service network.target
-Requires=docker.service
-
-[Service]
-User=root
-WorkingDirectory=$INSTALL_DIR
-EnvironmentFile=/etc/falco-guard.env
-Environment=GUARD_POLICY=$INSTALL_DIR/config/$POLICY_NAME GUARD_DATA=$DATA_DIR
-ExecStart=$INSTALL_DIR/venv/bin/python -m uvicorn guard.Main_alert_falco:app --host 127.0.0.1 --port 8080
-Restart=always
-RestartSec=3
-
-[Install]
-WantedBy=multi-user.target
-EOC
-#--------------------------------------------------------------------------
 say "Step 7 of 7" "${CYAN}Validating rules and starting services${NC}"
 if falco -V /etc/falco/falco_rules.yaml -V "$FALCO_RULES"; then
     say "OK" "${GREEN} Falco rules are valid and ready."
