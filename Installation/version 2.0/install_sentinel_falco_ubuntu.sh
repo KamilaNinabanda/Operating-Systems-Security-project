@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 #==============================================================================
 #Bash shell option that changes pipeline behaviour so the pipeline fails if any command in the chain fails.
-set -euo pipefail 
+set -euo pipefail
 #Colors to alerts or any warning during the installation
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -23,7 +23,7 @@ APT="apt-get install -y -qq -o Dpkg::Options::=--force-confold"
 # --- Paths ---
 INSTALL_DIR=/opt/Sentinel_Falco
 DATA_DIR=/var/lib/Sentinel_Falco
-FORENSICS_DIR=$DATA_DIR/Forensics
+COLLECT_INFO=$DATA_DIR/AUDIT
 FALCO_CONFIG=/etc/falco/config.d/configfalco.yaml
 FALCO_RULES=/etc/falco/rules.d/rules_detection_falco.yaml
 POLICY_NAME=policy_rules_defined.yaml
@@ -33,11 +33,11 @@ say() { echo -e "\033[0;34m[$1]\033[0m $2"; }
 die() { echo -e "\033[0;31m[!] $1\033[0m" >&2; exit 1; }
 
 #DIE: shows a message with the error and stops the intallation
-say Step 1 of 7 "${BLUE} Validating kernel and BTF${NC}"
+say "Step 1 of 7" "${BLUE} Validating kernel and BTF${NC}"
 [[ -f /sys/kernel/btf/vmlinux ]] || die "${YELLOW} Missing /sys/kernel/btf/vmlinux: modern_ebpf won't work (kernel $(uname -r))."
 #--------------------------------
 
-say Step 2 of 7 "${BLUE}Installing dependencies${NC}"
+say "Step 2 of 7" "${BLUE}Installing dependencies${NC}"
 command -v apt-get >/dev/null || die "${RED}CRITICAL: This installer only supports Debian/Ubuntu (apt)."
 apt-get update -qq
 $APT ca-certificates curl gnupg openssl python3 python3-venv
@@ -45,7 +45,7 @@ python3 -c 'import sys; sys.exit(0 if sys.version_info >= (3,10) else 1)' || die
 
 #----------------------------------------
 
-say Step 3 of 7 "${BLUE}Verifying Docker${NC}"
+say "Step 3 of 7" "${BLUE}Verifying Docker${NC}"
 if ! command -v docker >/dev/null; then
   curl -fsSL https://get.docker.com | sh
 fi
@@ -63,17 +63,14 @@ if ! command -v falco >/dev/null; then
 fi
 #----------------------------------------------------------------
 
-say Step 5 of 7 "${BLUE}Deploying Sentinel_Falco in $INSTALL_DIR${NC}"
+say "Step 5 of 7" "${BLUE}Deploying Sentinel_Falco in $INSTALL_DIR${NC}"
 #creates directories: alert, policies, information of containers isolated,falco configuration
 #prepare dependencies to deploy the rules
-mkdir -p "$INSTALL_DIR/guard" "$INSTALL_DIR/config" "$DATA_DIR" "$FORENSICS_DIR" /etc/falco/rules.d /etc/falco/config.d
+mkdir -p "$INSTALL_DIR/guard" "$INSTALL_DIR/config" "$DATA_DIR" "$COLLECT_INFO" /etc/falco/rules.d /etc/falco/config.d
 cd "$INSTALL_DIR"
 : > "$INSTALL_DIR/guard/__init__.py"
-cat > "$INSTALL_DIR/guard/policy.py" <<'__GUARD_EOF__' 
+cat > "$INSTALL_DIR/guard/policy.py" <<'__GUARD_EOF__'
 """Decision engine: ignore, alert or isolate?"""
-import threading
-import time
-from collections import defaultdict, deque
 from dataclasses import dataclass
 
 import yaml
@@ -88,8 +85,6 @@ class DecisionActions:
 class Policies:
     def __init__(self, cfg: dict):
         self.cfg = cfg
-        self._hits = defaultdict(deque)
-        self._lock = threading.Lock()
 
     @classmethod
     def from_file(cls, path: str) -> "Policies":
@@ -113,23 +108,12 @@ class Policies:
             return DecisionActions("ignore", "container is in allowlist")
 
         rule = event.get("rule", "")
-        rcfg = (self.cfg.get("rules") or {}).get(rule)
-        if rcfg is None:
+        configrule = (self.cfg.get("rules") or {}).get(rule)
+        if configrule is None:
             return DecisionActions("alert", "rule without a policy: alert only")
-        if rcfg.get("action") == "isolate":
+        if configrule.get("action") == "isolate":
             return DecisionActions("isolate", f"Critical rule: {rule}")
 
-        n, window = rcfg.get("escalate_after"), rcfg.get("window", 60)
-        if n:
-            now = time.monotonic()
-            with self._lock:
-                q = self._hits[(cid, rule)]
-                q.append(now)
-                while q and now - q[0] > window:
-                    q.popleft()
-                if len(q) >= n:
-                    q.clear()
-                    return DecisionActions("isolate", f"{n} events of '{rule}' in {window}s")
         return DecisionActions("alert", "alert only")
 __GUARD_EOF__
 cat > "$INSTALL_DIR/guard/isolation_recovery_container.py" <<'__GUARD_EOF__'
@@ -149,9 +133,9 @@ class ContainerIsolation:
     def __init__(self, steps, detection_mode, data_dir):
         self.steps = steps or ["network", "pause"]  # network | pause | stop
         self.detection_mode = detection_mode
-        self.forensics_dir = os.path.join(data_dir, "Forensics")
+        self.collect_info = os.path.join(data_dir, "AUDIT")
         self.state_path = os.path.join(data_dir, "state.json")
-        os.makedirs(self.forensics_dir, exist_ok=True)
+        os.makedirs(self.collect_info, exist_ok=True)
         self._client = None
         self._lock = threading.Lock()
         self.state = {}
@@ -184,7 +168,7 @@ class ContainerIsolation:
         if c.status == "running":
             collectedinfo["processes"] = c.top()
         collectedinfo["logs_tail"] = c.logs(tail=200).decode(errors="replace")
-        path = os.path.join(self.forensics_dir, f"{c.name}-{int(time.time())}.json")
+        path = os.path.join(self.collect_info, f"{c.name}-{int(time.time())}.json")
         with open(path, "w") as f:
             json.dump(collectedinfo, f, indent=2, default=str)
         return path
@@ -454,7 +438,7 @@ python3 -m venv "$INSTALL_DIR/venv"
 "$INSTALL_DIR/venv/bin/pip" install -q "fastapi==0.115.*" "uvicorn[standard]==0.32.*" "docker==7.1.*" "PyYAML==6.0.*" "requests==2.32.*"
 
 #---------------------------------------------------------------
-say Step 6 of 7 "${BLUE}Configuring token and Falco HTTP output${NC}"
+say "Step 6 of 7" "${BLUE}Configuring token and Falco HTTP output${NC}"
 if [[ -f /etc/falco-guard.env ]]; then
   # Reinstall: keep the token, SLACK_WEBHOOK_URL and the mode (the mode only changes with --enforce)
   TOKEN=$(grep '^GUARD_TOKEN=' /etc/falco-guard.env | cut -d= -f2)
