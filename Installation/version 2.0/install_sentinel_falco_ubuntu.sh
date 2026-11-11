@@ -178,7 +178,8 @@ class ContainerIsolation:
         collectedinfo["logs_tail"] = c.logs(tail=200).decode(errors="replace")
         path = os.path.join(self.collect_info, f"{c.name}-{int(time.time())}.json")
         with open(path, "w") as f:
-            json.dump(collectedinfo, f, indent=2, default=str)
+          json.dump(collectedinfo, f, indent=2, default=str)
+        os.chmod(path, 0o600)
         return path
 
     def isolate(self, cid: str, reason: str) -> dict:
