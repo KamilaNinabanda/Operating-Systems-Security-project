@@ -345,7 +345,7 @@ cat > "$FALCO_RULES" <<'__GUARD_EOF__'
 - macro: guard_open
   condition: (evt.type in (open, openat, openat2) and fd.num >= 0)
 - macro: guard_spawn
-   condition: (evt.type in (execve, execveat))
+  condition: (evt.type in (execve, execveat))
 - macro: guard_trusted
   condition: (container.image.repository in (falcosecurity/falco, falco-guard))
 # Container startup: runc opens the rootfs at /var/lib/docker/rootfs/overlayfs/ (noise, not an attack).
@@ -380,10 +380,7 @@ cat > "$FALCO_RULES" <<'__GUARD_EOF__'
 
 - rule: Runtime Socket non Authorized
   desc: A container opens/connects to the Docker/containerd/CRI-O socket
-  condition: >
-    (guard_open or (evt.type = connect and evt.dir = <)) and container.id != host and
-    not guard_trusted and
-    (fd.name contains docker.sock or fd.name contains containerd.sock or fd.name contains crio.sock)
+  condition: evt.type = mount and container.id != host and not guard_trusted and not proc.name startswith "runc:"
   output: >
     Access to the runtime socket (sock=%fd.name proc=%proc.cmdline container=%container.name
     image=%container.image.repository id=%container.id)
@@ -472,8 +469,9 @@ WantedBy=multi-user.target
 EOC
 
 say 7/7 "${CYAN}Validating rules and starting services${NC}"
-falco -V /etc/falco/falco_rules.yaml -V "$FALCO_RULES" >/dev/null 2>&1 \
-  || die "${RED}The rules are not valid. Check: falco -V /etc/falco/falco_rules.yaml -V $FALCO_RULES"
+if ! falco -V /etc/falco/falco_rules.yaml -V "$FALCO_RULES"; then
+    die "Falco rule validation failed. Review the error above."
+fi
 
 systemctl daemon-reload
 systemctl enable --now falco-guard.service          # guard first...
