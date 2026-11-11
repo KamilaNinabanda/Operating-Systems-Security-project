@@ -345,7 +345,7 @@ cat > "$FALCO_RULES" <<'__GUARD_EOF__'
 - macro: guard_open
   condition: (evt.type in (open, openat, openat2) and fd.num >= 0)
 - macro: guard_spawn
-  condition: (evt.type in (execve, execveat) and evt.dir = <)
+   condition: (evt.type in (execve, execveat))
 - macro: guard_trusted
   condition: (container.image.repository in (falcosecurity/falco, falco-guard))
 # Container startup: runc opens the rootfs at /var/lib/docker/rootfs/overlayfs/ (noise, not an attack).
