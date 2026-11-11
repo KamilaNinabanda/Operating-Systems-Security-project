@@ -1,3 +1,6 @@
+==================================
+INSTALL DOCKER FIRST
+===================================
 sudo chmod +x install_sentinel_falco_ubuntu.sh     
 sudo ./install_sentinel_falco_ubuntu.sh          #  DETECTION_MODE
 
