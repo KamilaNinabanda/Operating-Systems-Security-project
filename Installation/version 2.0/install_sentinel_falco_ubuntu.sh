@@ -53,7 +53,7 @@ systemctl enable --now docker
 #------------------------------------------
 #Verifies if falco is installed, if so then this step is skipped 
 
-say 4/7 "${BLUE}Installing Falco (official repository)${NC}"
+say "Step 4 of 7""${BLUE}Installing Falco (official repository)${NC}"
 if ! command -v falco >/dev/null; then
   mkdir -p /etc/apt/keyrings
   curl -fsSL https://falco.org/repo/falcosecurity-packages.asc | gpg --dearmor --yes -o "$APT_KEYRING"
@@ -468,9 +468,11 @@ RestartSec=3
 WantedBy=multi-user.target
 EOC
 
-say 7/7 "${CYAN}Validating rules and starting services${NC}"
-if ! falco -V /etc/falco/falco_rules.yaml -V "$FALCO_RULES"; then
-    die "Falco rule validation failed. Review the error above."
+say "Step 7 of 7""${CYAN}Validating rules and starting services${NC}"
+if falco -V /etc/falco/falco_rules.yaml -V "$FALCO_RULES"; then
+    say "OK" "Falco rules are valid and ready."
+else
+    die "Falco rule validation failed. Check the errors above."
 fi
 
 systemctl daemon-reload
