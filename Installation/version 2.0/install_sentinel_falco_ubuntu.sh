@@ -29,7 +29,11 @@ FALCO_RULES=/etc/falco/rules.d/rules_detection_falco.yaml
 POLICY_NAME=policy_rules_defined.yaml
 APT_KEYRING=/etc/apt/keyrings/verify_repo_install.gpg
 
-say() { echo -e "\033[0;34m[$1]\033[0m $2"; }
+say() {
+    local step="${1:-INFO}"
+    local message="${2:-}"
+    echo -e "\033[0;34m[$step]\033[0m $message"
+}
 die() { echo -e "\033[0;31m[!] $1\033[0m" >&2; exit 1; }
 
 #DIE: shows a message with the error and stops the intallation
