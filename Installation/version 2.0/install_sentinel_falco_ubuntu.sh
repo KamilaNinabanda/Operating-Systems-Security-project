@@ -117,7 +117,7 @@ class Policies:
         return DecisionActions("alert", "alert only")
 __GUARD_EOF__
 cat > "$INSTALL_DIR/guard/isolation_recovery_container.py" <<'__GUARD_EOF__'
-"""Executes container isolation and recovery via Docker SDK (with forensic evidence and rollback)."""
+"""Executes container isolation and recovery via Docker SDK"""
 import json
 import logging
 import os
@@ -187,7 +187,7 @@ class ContainerIsolation:
             if self.detection_mode:
                 return {"status": "detection_mode", "container": c.name, "would_do": steps}
 
-            forensics = self._gatherInfo(c)  # collect evidence first
+            forensics = self._gatherInfo(c)  # collect information of the container
             done = []
             for step in steps:
                 if step == "network" and not host_net:
@@ -351,7 +351,7 @@ rules:
   "File Modification Escape Attempt":  {action: isolate}
   "Runtime Socket non Authorized":    {action: isolate}
   "NSENTER Execution":                {action: isolate}
-  "Mount Detection":                  {action: alert}   # no escalation until runc noise is validated
+  "Mount Detection":                  {action: alert}   
   "Interactive Shell Active":         {action: alert}
 __GUARD_EOF__
 cat > "$FALCO_RULES" <<'__GUARD_EOF__'
@@ -503,7 +503,7 @@ systemctl is-active --quiet falco-modern-bpf || die "${RED}Falco could not start
 cat <<EOM
 
 ===========================================================================================================================
- Sentinel_Falco installed. Mode: $([[ $DETECTION == true ]] && echo "DETECTION_MODE (detects and alerts only, no isolation)" || echo "ENFORCE (real isolation)")
+ Sentinel_Falco installed. Mode: $([[ $DETECTION == true ]] && echo "DETECTION_MODE (detects and alerts only, no isolation)" || echo "ENFORCE (isolation)")
 =============================================================================================================================
  Token (saved in /etc/falco-guard.env): $TOKEN
 
