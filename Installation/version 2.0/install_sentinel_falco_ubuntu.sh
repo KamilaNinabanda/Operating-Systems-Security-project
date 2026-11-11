@@ -49,11 +49,22 @@ python3 -c 'import sys; sys.exit(0 if sys.version_info >= (3,10) else 1)' || die
 
 #----------------------------------------
 
-say "Step 3 of 7" "${BLUE}Verifying Docker${NC}"
-if ! command -v docker >/dev/null; then
-  curl -fsSL https://get.docker.com | sh
-fi
-systemctl enable --now docker
+say "Step 3 of 7" "${BLUE}Verifying Docker installation${NC}"
+
+# Docker has to be installed.
+command -v docker >/dev/null 2>&1 \
+    || die "${RED} [!] Docker is not installed. Install and configure Docker before Sentinel_Falco."
+
+# Docker daemon must be running.
+systemctl is-active --quiet docker \
+    || die "$[YELLOW] WARNING: Docker service is not running. Start it with: sudo systemctl start docker"
+
+# Verify that the daemon responds.
+docker info >/dev/null 2>&1 \
+    || die "${RED} [!] Cannot communicate with Docker daemon. Check Docker service status."
+
+say "VALIDATED" "${GREEN}Docker is installed and functional.${NC}"
+
 #------------------------------------------
 #Verifies if falco is installed, if so then this step is skipped 
 
@@ -472,7 +483,7 @@ RestartSec=3
 WantedBy=multi-user.target
 EOC
 
-say "Step 7 of 7""${CYAN}Validating rules and starting services${NC}"
+say "Step 7 of 7" "${CYAN}Validating rules and starting services${NC}"
 if falco -V /etc/falco/falco_rules.yaml -V "$FALCO_RULES"; then
     say "OK" "${GREEN} Falco rules are valid and ready."
 else
