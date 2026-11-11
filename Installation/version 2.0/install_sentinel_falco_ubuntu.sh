@@ -25,6 +25,8 @@ APT="apt-get install -y -qq -o Dpkg::Options::=--force-confold"
 INSTALL_DIR=/opt/Sentinel_Falco
 DATA_DIR=/var/lib/Sentinel_Falco
 COLLECT_INFO=$DATA_DIR/AUDIT
+chown root:root "$DATA_DIR/AUDIT"
+chmod 700 "$DATA_DIR/AUDIT"
 FALCO_CONFIG=/etc/falco/config.d/configfalco.yaml
 FALCO_RULES=/etc/falco/rules.d/rules_detection_falco.yaml
 POLICY_NAME=policy_rules_defined.yaml
@@ -372,7 +374,7 @@ rules:
   "File Modification Escape Attempt":  {action: isolate}
   "Runtime Socket non Authorized":    {action: isolate}
   "NSENTER Execution":                {action: isolate}
-  "Mount Detection":                  {action: alert}   # no escalation until runc noise is validated
+  "Mount Detection":                  {action: alert}   
   "Interactive Shell Active":         {action: alert}
 __GUARD_EOF__
 cat > "$FALCO_RULES" <<'__GUARD_EOF__'
