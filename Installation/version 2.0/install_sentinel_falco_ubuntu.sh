@@ -2,6 +2,7 @@
 #==============================================================================
 #Bash shell option that changes pipeline behaviour so the pipeline fails if any command in the chain fails.
 set -euo pipefail
+umask 077
 #Colors to alerts or any warning during the installation
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -299,10 +300,29 @@ notifier = Notificationalert(os.path.join(DATA, "alerts.jsonl"),
 
 app = FastAPI(title="Sentinel_Falco")
 
-
 def _auth(token, header):
-    if TOKEN and not hmac.compare_digest((token or header or ""), TOKEN):
-        raise HTTPException(401, "invalid token")
+    # Reject requests when there is not a configured token.
+    if not TOKEN:
+        logging.critical(
+            "GUARD_TOKEN is missing. Unauthenticated request."
+        )
+        raise HTTPException(
+            status_code=503,
+            detail="Authentication is not well configured"
+        )
+
+    # Prefer the HTTP header; use the query parameter as fallback.
+    supplied_token = header if header is not None else token
+
+    # No accept missing or invalid tokens.
+    if not supplied_token or not hmac.compare_digest(
+        supplied_token,
+        TOKEN
+    ):
+        raise HTTPException(
+            status_code=401,
+            detail="Invalid authentication token"
+        )
 
 
 @app.post("/falco")
@@ -436,19 +456,45 @@ python3 -m venv "$INSTALL_DIR/venv"
 "$INSTALL_DIR/venv/bin/pip" install -q "fastapi==0.115.*" "uvicorn[standard]==0.32.*" "docker==7.1.*" "PyYAML==6.0.*" "requests==2.32.*"
 
 #---------------------------------------------------------------
-say "Step 6 of 7" "${BLUE}Configuring token and Falco HTTP output${NC}"
-if [[ -f /etc/falco-guard.env ]]; then
-  # Reinstall: keep the token, SLACK_WEBHOOK_URL and the mode (the mode only changes with --enforce)
-  TOKEN=$(grep '^GUARD_TOKEN=' /etc/falco-guard.env | cut -d= -f2)
-  [[ "${1:-}" == "--enforce" ]] && sed -i "s/^GUARD_DETECTION_MODE=.*/GUARD_DETECTION_MODE=$DETECTION/" /etc/falco-guard.env
-  DETECTION=$(grep '^GUARD_DETECTION_MODE=' /etc/falco-guard.env | cut -d= -f2)
-else
-  TOKEN=$(openssl rand -hex 24)
-  printf 'GUARD_TOKEN=%s\nGUARD_DETECTION_MODE=%s\n# SLACK_WEBHOOK_URL=\n' "$TOKEN" "$DETECTION" > /etc/falco-guard.env
-fi
-chmod 600 /etc/falco-guard.env
 
-# Goes in config.d: it does not replace the default falco.yaml, it only extends it.
+say "Step 6 of 7" "${BLUE}Configuring token and Falco HTTP output${NC}"
+
+ENV_FILE="/etc/falco-guard.env"
+
+# If a token valid is found then is kept
+TOKEN=""
+if [[ -f "$ENV_FILE" ]]; then
+    TOKEN="$(sed -n 's/^GUARD_TOKEN=//p' "$ENV_FILE" | head -n 1)"
+fi
+# Generate a new token if there isn't a valid one
+if [[ ! "$TOKEN" =~ ^[[:xdigit:]]{48,128}$ ]]; then
+    TOKEN="$(openssl rand -hex 32)"
+fi
+
+# Create a temporary environment file.
+TMP_ENV="$(mktemp /etc/falco-guard.env.XXXXXX)"
+trap 'rm -f "$TMP_ENV"' EXIT
+#in case the installation fails, we don't keep temp files
+
+# Preserve variables.
+if [[ -f "$ENV_FILE" ]]; then
+    grep -v -E '^(GUARD_TOKEN|GUARD_DETECTION_MODE)=' \
+        "$ENV_FILE" > "$TMP_ENV" || true
+fi
+
+# Write the token and detection mode.
+{
+    printf 'GUARD_TOKEN=%s\n' "$TOKEN"
+    printf 'GUARD_DETECTION_MODE=%s\n' "$DETECTION"
+} >> "$TMP_ENV"
+
+chown root:root "$TMP_ENV"
+chmod 600 "$TMP_ENV"
+mv -f "$TMP_ENV" "$ENV_FILE"
+trap - EXIT
+#in case the installation fails, we don't keep temp files
+
+# Generate Falco configuration.
 cat > "$FALCO_CONFIG" <<EOC
 engine:
   kind: modern_ebpf
@@ -456,14 +502,17 @@ engine:
 json_output: true
 json_include_output_property: true
 json_include_tags_property: true
-rule_matching: all   # evaluate ALL rules (the default 'first' lets the stock rules shadow ours)
+rule_matching: all
 http_output:
   enabled: true
   url: "http://127.0.0.1:8080/falco?token=${TOKEN}"
   user_agent: "falco/guard"
 EOC
-chmod 640 "$FALCO_CONFIG"
 
+chmod 640 "$FALCO_CONFIG"
+unset TOKEN
+
+# Configure systemd service.
 cat > /etc/systemd/system/falco-guard.service <<EOC
 [Unit]
 Description=Sentinel_Falco: alerts and automatic isolation of containers
@@ -483,6 +532,26 @@ RestartSec=3
 WantedBy=multi-user.target
 EOC
 
+#---------------------------------------------
+cat > /etc/systemd/system/falco-guard.service <<EOC
+[Unit]
+Description=Sentinel_Falco: alerts and automatic isolation of containers
+After=docker.service network.target
+Requires=docker.service
+
+[Service]
+User=root
+WorkingDirectory=$INSTALL_DIR
+EnvironmentFile=/etc/falco-guard.env
+Environment=GUARD_POLICY=$INSTALL_DIR/config/$POLICY_NAME GUARD_DATA=$DATA_DIR
+ExecStart=$INSTALL_DIR/venv/bin/python -m uvicorn guard.Main_alert_falco:app --host 127.0.0.1 --port 8080
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target
+EOC
+#--------------------------------------------------------------------------
 say "Step 7 of 7" "${CYAN}Validating rules and starting services${NC}"
 if falco -V /etc/falco/falco_rules.yaml -V "$FALCO_RULES"; then
     say "OK" "${GREEN} Falco rules are valid and ready."
@@ -506,7 +575,6 @@ cat <<EOM
 ===========================================================================================================================
  Sentinel_Falco installed. Mode: $([[ $DETECTION == true ]] && echo "DETECTION_MODE (detects and alerts only, no isolation)" || echo "ENFORCE (real isolation)")
 =============================================================================================================================
- Token (saved in /etc/falco-guard.env): $TOKEN
-
- Logs:       journalctl -u falco-guard -f   |   journalctl -u falco-modern-bpf -f
+Token (saved in /etc/falco-guard.env)
+Logs:       journalctl -u falco-guard -f   |   journalctl -u falco-modern-bpf -f
 EOM
