@@ -1,5 +1,8 @@
 #!/usr/bin/env bash
 #==============================================================================
+# Supported systems: Ubuntu from version >=22.04 , Debian 12+, Kali Linux
+# Requirements: systemd, kernel >= 5.8 with BTF, Python >= 3.10, Docker.
+#   sudo ./install_sentinel_falco.sh [--enforce] [--port N] because in KALI the default port can be already used 
 #Bash shell option that changes pipeline behaviour so the pipeline fails if any command in the chain fails.
 set -euo pipefail
 umask 077
@@ -11,10 +14,30 @@ YELLOW='\033[1;33m'
 CYAN='\033[0;36m'
 NC='\033[0m'
 
+# --- EXTRA INFO 
+#   --enforce   real isolation (default: detection mode = detect and alert only)
+#   --port N    port of the local API (default 8080, or the one used by a previous install)
+valid_port() { [[ "$1" =~ ^[0-9]+$ ]] && (( 10#$1 >= 1024 && 10#$1 <= 65535 )); }
+DETECTION=true
+PORT_FLAG=""
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --enforce) DETECTION=false ;;
+    --port)
+      [[ -n "${2:-}" ]] || { echo -e "${RED}[!] --port choose a value.${NC}" >&2; exit 1; }
+      PORT_FLAG="$2"; shift ;;
+    -h|--help) echo "Usage: $0 [--enforce] [--port N]"; exit 0 ;;
+    *) echo -e "${RED}[!] Unknown option: $1${NC}" >&2; exit 1 ;;
+  esac
+  shift
+done
+if [[ -n "$PORT_FLAG" ]] && ! valid_port "$PORT_FLAG"; then
+  echo -e "${RED}[!] Invalid port '$PORT_FLAG' (use a number between 1024 and 65535).${NC}" >&2; exit 1
+fi
+# --- end arguments ---
+
 #It verifies that we execute with sudo because the program edit and create files. 
-#If we include --enforce the isolation feature is included
 [[ $EUID -eq 0 ]] || { echo -e "${RED}[!] Execute as root with sudo.${NC}"; exit 1; }
-DETECTION=true; [[ "${1:-}" == "--enforce" ]] && DETECTION=false
 
 # This prevents the appeareance of prompts regarding services (restarting)
 export DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=l
@@ -25,27 +48,60 @@ APT="apt-get install -y -qq -o Dpkg::Options::=--force-confold"
 INSTALL_DIR=/opt/Sentinel_Falco
 DATA_DIR=/var/lib/Sentinel_Falco
 COLLECT_INFO="$DATA_DIR/AUDIT"
-
-# Create and protect sensitive data about the collection of info
-mkdir -p "$COLLECT_INFO"
-chown root:root "$COLLECT_INFO"
-chmod 700 "$COLLECT_INFO"
-
 FALCO_CONFIG=/etc/falco/config.d/configfalco.yaml
 FALCO_RULES=/etc/falco/rules.d/rules_detection_falco.yaml
 POLICY_NAME=policy_rules_defined.yaml
 APT_KEYRING=/etc/apt/keyrings/verify_repo_install.gpg
 
-say() {
-    local step="${1:-INFO}"
-    local message="${2:-}"
-    echo -e "\033[0;34m[$step]\033[0m $message"
-}
+say() { echo -e "\033[0;34m[${1:-INFO}]\033[0m ${2:-}"; }
 die() { echo -e "\033[0;31m[!] $1\033[0m" >&2; exit 1; }
 
+# --- OS detection ---
+OS_ID="$( . /etc/os-release 2>/dev/null && echo "${ID:-unknown}" || echo unknown )"
+OS_LIKE="$( . /etc/os-release 2>/dev/null && echo "${ID_LIKE:-}" || true )"
+OS_NAME="$( . /etc/os-release 2>/dev/null && echo "${PRETTY_NAME:-$OS_ID}" || echo "$OS_ID" )"
+OS_VERSION="$( . /etc/os-release 2>/dev/null && echo "${VERSION_ID:-0}" || echo 0 )"
+case " $OS_ID $OS_LIKE " in
+  *" ubuntu "*|*" debian "*|*" kali "*) ;;
+  *) die "${RED}Unsupported distribution: $OS_NAME. Supported: Ubuntu, Debian and Kali Linux (or another apt-based derivative).${NC}" ;;
+esac
+# Ubuntu: 22.04 or newer (Python < 3.10 is not valid)
+if [[ "$OS_ID" == "ubuntu" ]]; then
+  [[ "$OS_VERSION" =~ ^[0-9]+(\.[0-9]+)?$ ]] || OS_VERSION=0
+  IFS=. read -r _maj _min <<< "$OS_VERSION"
+  if ! (( 10#${_maj:-0} > 22 || (10#${_maj:-0} == 22 && 10#${_min:-0} >= 4) )); then
+    die "${RED}Ubuntu $OS_VERSION is not supported: Ubuntu 22.04 or newer is required.${NC}"
+  fi
+fi
+IS_KALI=false
+if [[ "$OS_ID" == "kali" ]]; then IS_KALI=true; fi
+# --- end OS detection ---
+
 #DIE: shows a message with the error and stops the intallation
-say "Step 1 of 7" "${BLUE} Validating kernel and BTF${NC}"
-[[ -f /sys/kernel/btf/vmlinux ]] || die "${YELLOW} Missing /sys/kernel/btf/vmlinux: modern_ebpf won't work (kernel $(uname -r))."
+say "Step 1 of 7" "${BLUE} Validating system, kernel, systemd and port${NC}"
+if $IS_KALI; then say "KALI" "${CYAN}Kali Linux was detected: $OS_NAME${NC}"; fi
+
+WSL_NOTE=""
+if grep -qi microsoft /proc/version 2>/dev/null; then
+  WSL_NOTE=" WSL detected: the default WSL kernel often has no BTF and needs systemd enabled ([boot] systemd=true in /etc/wsl.conf)."
+fi
+[[ -f /sys/kernel/btf/vmlinux ]] || die "${YELLOW} Missing /sys/kernel/btf/vmlinux: modern_ebpf won't work (kernel $(uname -r)).$WSL_NOTE"
+[[ -d /run/systemd/system ]] || die "${YELLOW} systemd is not running: Sentinel_Falco installs systemd services.$WSL_NOTE"
+
+# Port of the local API. Burp Suite and OWASP ZAP (common on Kali) listen on 8080 by default.
+ENV_FILE="/etc/falco-guard.env"
+OLD_PORT=""
+if [[ -f "$ENV_FILE" ]]; then OLD_PORT="$(sed -n 's/^GUARD_PORT=//p' "$ENV_FILE" | head -n 1)"; fi
+PORT="${PORT_FLAG:-${OLD_PORT:-8080}}"
+valid_port "$PORT" || die "${YELLOW} Invalid port '$PORT' (check GUARD_PORT in $ENV_FILE)."
+port_in_use() { (exec 3<>"/dev/tcp/127.0.0.1/$1") 2>/dev/null; }
+if port_in_use "$PORT"; then
+  if systemctl is-active --quiet falco-guard.service 2>/dev/null && [[ "$PORT" == "${OLD_PORT:-8080}" ]]; then
+    say "PORT" "${CYAN}127.0.0.1:$PORT is used by the running falco-guard (reinstall).${NC}"
+  else
+    die "${RED} Port $PORT is already used by another program (Burp Suite and ZAP use 8080 by default). Choose another one: sudo $0 --port 18080"
+  fi
+fi
 #--------------------------------
 
 say "Step 2 of 7" "${BLUE}Installing dependencies${NC}"
@@ -58,27 +114,34 @@ python3 -c 'import sys; sys.exit(0 if sys.version_info >= (3,10) else 1)' || die
 
 say "Step 3 of 7" "${BLUE}Verifying Docker installation${NC}"
 
+DOCKER_INSTALL_HINT=""
+DOCKER_START_HINT="sudo systemctl start docker"
+if $IS_KALI; then
+  DOCKER_INSTALL_HINT=" On Kali: sudo apt install docker.io"
+  DOCKER_START_HINT="sudo systemctl enable --now docker"
+fi
+
 # Docker has to be installed.
 command -v docker >/dev/null 2>&1 \
-    || die "${RED} [!] Docker is not installed. Install and configure Docker before Sentinel_Falco."
+    || die "${RED} [!] Docker is not installed. Install and configure Docker before Sentinel_Falco.$DOCKER_INSTALL_HINT"
 
 # Docker daemon must be running.
-systemctl is-active --quiet docker \
-    || die "${YELLOW}WARNING: Docker service is not running. Start it with: sudo systemctl start docker."
+systemctl is-active --quiet docker || systemctl is-active --quiet snap.docker.dockerd \
+    || die "${YELLOW}WARNING: Docker service is not running. Start it with: $DOCKER_START_HINT"
 # Verify that the daemon responds.
 docker info >/dev/null 2>&1 \
     || die "${RED} [!] Cannot communicate with Docker daemon. Check Docker service status."
 
 say "VALIDATED" "${GREEN}Docker is installed and functional.${NC}"
 #------------------------------------------
-#Verifies if falco is installed, if so then this step is skipped 
-
+#Verifies if falco is installed, if its install then just skips and goes to the next one
 say "Step 4 of 7" "${BLUE}Installing Falco (official repository)${NC}"
 if ! command -v falco >/dev/null; then
-  mkdir -p /etc/apt/keyrings
+  install -d -m 0755 /etc/apt/keyrings   # 755 on purpose: apt reads it as user _apt (mkdir would give 700 under umask 077)
   curl -fsSL https://falco.org/repo/falcosecurity-packages.asc | gpg --dearmor --yes -o "$APT_KEYRING"
   chmod 644 "$APT_KEYRING"   # apt verifies it as user _apt: it must be world-readable (umask is 077)
   echo "deb [signed-by=$APT_KEYRING] https://download.falco.org/packages/deb stable main" > /etc/apt/sources.list.d/falcosecurity.list
+  chmod 644 /etc/apt/sources.list.d/falcosecurity.list
   apt-get update -qq
   $APT falco
 fi
@@ -87,11 +150,11 @@ fi
 say "Step 5 of 7" "${BLUE}Deploying Sentinel_Falco in $INSTALL_DIR${NC}"
 #creates directories: alert, policies, information of containers isolated,falco configuration
 #prepare dependencies to deploy the rules
-mkdir -p "$INSTALL_DIR/guard" "$INSTALL_DIR/config" "$DATA_DIR" "$COLLECT_INFO" /etc/falco/rules.d /etc/falco/config.d
-cd "$INSTALL_DIR"
-: > "$INSTALL_DIR/guard/__init__.py"
+mkdir -p "$INSTALL_DIR/guard" "$INSTALL_DIR/config" /etc/falco/rules.d /etc/falco/config.d
+install -d -m 700 "$DATA_DIR" "$COLLECT_INFO"   # private: alerts, state and evidence snapshots
+touch "$INSTALL_DIR/guard/__init__.py"
 cat > "$INSTALL_DIR/guard/policy.py" <<'__GUARD_EOF__'
-"""Decision engine: ignore, alert or isolate?"""
+"""Decision mechanism: ignore, alert or isolate?"""
 from dataclasses import dataclass
 
 import yaml
@@ -171,9 +234,8 @@ class ContainerIsolation:
         return self._find(cid) is not None
 
     def _gatherInfo(self, c) -> str:
-    #collects data from the container that will be isolated
+        """Snapshot of the container about to be isolated; Env values are redacted (they may hold secrets)."""
         attrs = json.loads(json.dumps(c.attrs))
-        #Since containers can have API passwords, token or passwords the info replaces that for "not for reading"
         attrs["Config"]["Env"] = [e.split("=", 1)[0] + "=<not for reading>" for e in attrs["Config"].get("Env") or []]
         collectedinfo = {"inspect": attrs, "fs_diff": c.diff()}
         if c.status == "running":
@@ -286,7 +348,7 @@ import hmac
 import logging
 import os
 
-from fastapi import FastAPI, Header, HTTPException, Query
+from fastapi import Depends, FastAPI, Header, HTTPException, Query
 
 from .isolation_recovery_container import ContainerIsolation
 from .notification_alerter import Notificationalert
@@ -307,34 +369,18 @@ notifier = Notificationalert(os.path.join(DATA, "alerts.jsonl"),
 app = FastAPI(title="Sentinel_Falco")
 
 
-def _auth(token, header):
-    # Reject requests when there is not a configured token.
+def require_token(token: str | None = Query(None), x_guard_token: str | None = Header(None)):
+    """Header first, query parameter as fallback (Falco sends the token in the URL). Fails closed."""
     if not TOKEN:
-        logging.critical(
-            "GUARD_TOKEN is missing. Unauthenticated request."
-        )
-        raise HTTPException(
-            status_code=503,
-            detail="Authentication is not well configured"
-        )
-
-    # Prefer the HTTP header; use the query parameter as fallback.
-    supplied_token = header if header is not None else token
-
-    # No accept missing or invalid tokens.
-    if not supplied_token or not hmac.compare_digest(
-        supplied_token,
-        TOKEN
-    ):
-        raise HTTPException(
-            status_code=401,
-            detail="Invalid authentication token"
-        )
+        logging.critical("GUARD_TOKEN is missing: refusing authenticated requests.")
+        raise HTTPException(503, "Authentication is not well configured")
+    supplied = x_guard_token if x_guard_token is not None else token
+    if not supplied or not hmac.compare_digest(supplied.encode(), TOKEN.encode()):
+        raise HTTPException(401, "Invalid authentication token")
 
 
-@app.post("/falco")
-def falco_event(event: dict, token: str | None = Query(None), x_guard_token: str | None = Header(None)):
-    _auth(token, x_guard_token)
+@app.post("/falco", dependencies=[Depends(require_token)])
+def falco_event(event: dict):
     decision = engine.decide(event)
     if decision.action == "ignore":
         return {"decision": "ignore", "reason": decision.reason}
@@ -356,15 +402,13 @@ def health():
     return {"status": "ok", "detection_mode": detection_mode, "isolation_steps": isolator.steps}
 
 
-@app.get("/isolated_container")
-def isolated_container(token: str | None = Query(None), x_guard_token: str | None = Header(None)):
-    _auth(token, x_guard_token)
+@app.get("/isolated_container", dependencies=[Depends(require_token)])
+def isolated_container():
     return isolator.state
 
 
-@app.post("/release/{cid}")
-def release(cid: str, token: str | None = Query(None), x_guard_token: str | None = Header(None)):
-    _auth(token, x_guard_token)
+@app.post("/release/{cid}", dependencies=[Depends(require_token)])
+def release(cid: str):
     return isolator.release(cid)
 __GUARD_EOF__
 POLICY_DST="$INSTALL_DIR/config/$POLICY_NAME"
@@ -468,40 +512,21 @@ python3 -m venv "$INSTALL_DIR/venv"
 #---------------------------------------------------------------
 say "Step 6 of 7" "${BLUE}Configuring token and Falco HTTP output${NC}"
 
-ENV_FILE="/etc/falco-guard.env"
+# Keep an existing valid token, otherwise generate one
+TOKEN="$(sed -n 's/^GUARD_TOKEN=//p' "$ENV_FILE" 2>/dev/null | head -n 1 || true)"
+[[ "$TOKEN" =~ ^[[:xdigit:]]{48,128}$ ]] || TOKEN="$(openssl rand -hex 32)"
 
-# If a token valid is found then is kept
-TOKEN=""
-if [[ -f "$ENV_FILE" ]]; then
-    TOKEN="$(sed -n 's/^GUARD_TOKEN=//p' "$ENV_FILE" | head -n 1)"
-fi
-# Generate a new token if there isn't a valid one
-if [[ ! "$TOKEN" =~ ^[[:xdigit:]]{48,128}$ ]]; then
-    TOKEN="$(openssl rand -hex 32)"
-fi
-
-# Create a temporary environment file.
-TMP_ENV="$(mktemp /etc/falco-guard.env.XXXXXX)"
-trap 'rm -f "$TMP_ENV"' EXIT
-#in case the installation fails, we don't keep temp files
-
-# Preserve variables.
-if [[ -f "$ENV_FILE" ]]; then
-    grep -v -E '^(GUARD_TOKEN|GUARD_DETECTION_MODE)=' \
-        "$ENV_FILE" > "$TMP_ENV" || true
-fi
-
-# Write the token and detection mode.
+# Rewrite the env file atomically (mktemp creates it 600), keeping other variables such as SLACK_WEBHOOK_URL
+TMP_ENV="$(mktemp "$ENV_FILE.XXXXXX")"
+trap 'rm -f "$TMP_ENV"' EXIT        # do not leave temp files if the installation fails
 {
+    grep -v -E '^(GUARD_TOKEN|GUARD_DETECTION_MODE|GUARD_PORT)=' "$ENV_FILE" 2>/dev/null || true
     printf 'GUARD_TOKEN=%s\n' "$TOKEN"
     printf 'GUARD_DETECTION_MODE=%s\n' "$DETECTION"
-} >> "$TMP_ENV"
-
-chown root:root "$TMP_ENV"
-chmod 600 "$TMP_ENV"
+    printf 'GUARD_PORT=%s\n' "$PORT"
+} > "$TMP_ENV"
 mv -f "$TMP_ENV" "$ENV_FILE"
 trap - EXIT
-#in case the installation fails, we don't keep temp files
 
 # Generate Falco configuration.
 cat > "$FALCO_CONFIG" <<EOC
@@ -514,7 +539,7 @@ json_include_tags_property: true
 rule_matching: all
 http_output:
   enabled: true
-  url: "http://127.0.0.1:8080/falco?token=${TOKEN}"
+  url: "http://127.0.0.1:${PORT}/falco?token=${TOKEN}"
   user_agent: "falco/guard"
 EOC
 
@@ -526,7 +551,7 @@ cat > /etc/systemd/system/falco-guard.service <<EOC
 [Unit]
 Description=Sentinel_Falco: alerts and automatic isolation of containers
 After=docker.service network.target
-Requires=docker.service
+Wants=docker.service
 
 [Service]
 User=root
@@ -534,7 +559,7 @@ UMask=0077
 WorkingDirectory=$INSTALL_DIR
 EnvironmentFile=/etc/falco-guard.env
 Environment=GUARD_POLICY=$INSTALL_DIR/config/$POLICY_NAME GUARD_DATA=$DATA_DIR
-ExecStart=$INSTALL_DIR/venv/bin/python -m uvicorn guard.Main_alert_falco:app --host 127.0.0.1 --port 8080
+ExecStart=$INSTALL_DIR/venv/bin/python -m uvicorn guard.Main_alert_falco:app --host 127.0.0.1 --port $PORT
 Restart=always
 RestartSec=3
 
@@ -550,13 +575,14 @@ else
 fi
 
 systemctl daemon-reload
-systemctl enable --now falco-guard.service          # guard first...
+systemctl enable falco-guard.service
+systemctl restart falco-guard.service               # guard first... (restart also applies new code/port on a reinstall)
 systemctl disable --now falco-kmod.service falco-bpf.service 2>/dev/null || true
 systemctl enable falco-modern-bpf.service
 systemctl restart falco-modern-bpf.service           # ...then Falco
 
-for i in {1..15}; do curl -fs http://127.0.0.1:8080/health >/dev/null && break || sleep 1; done
-curl -fs http://127.0.0.1:8080/health || die "${RED}The guard is not responding: journalctl -u falco-guard -n 30"
+for i in {1..15}; do curl -fs "http://127.0.0.1:$PORT/health" >/dev/null && break || sleep 1; done
+curl -fs "http://127.0.0.1:$PORT/health" || die "${RED}The guard is not responding: journalctl -u falco-guard -n 30"
 echo
 systemctl is-active --quiet falco-modern-bpf || die "${RED}Falco could not start: journalctl -u falco-modern-bpf -n 30"
 
@@ -565,6 +591,6 @@ cat <<EOM
 ===========================================================================================================================
  Sentinel_Falco installed. Mode: $([[ $DETECTION == true ]] && echo "DETECTION_MODE (detects and alerts only, no isolation)" || echo "ENFORCE (real isolation)")
 =============================================================================================================================
-Token (saved in /etc/falco-guard.env)
+API:        http://127.0.0.1:$PORT   (token saved in /etc/falco-guard.env)
 Logs:       journalctl -u falco-guard -f   |   journalctl -u falco-modern-bpf -f
 EOM
