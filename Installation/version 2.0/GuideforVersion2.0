@@ -1,12 +1,38 @@
 ==================================
 INSTALL DOCKER FIRST
 ===================================
-sudo chmod +x install_sentinel_falco_ubuntu.sh     
-sudo ./install_sentinel_falco_ubuntu.sh          #  DETECTION_MODE
+IN UBUNTU 
+sudo apt update
+sudo apt install docker.io -y
+sudo systemctl enable --now docker
+sudo docker --version
+sudo docker info
 
+IN KALI LINUX 
+
+sudo apt update
+sudo apt install docker.io -y
+sudo systemctl enable --now docker
+sudo docker --version
+sudo docker info
+
+===================================================
+INSTALL APPLICATION  
+====================================================
+-Create a file or choose a file where to deploy
+mkdir project
+create the file with the name: install_sentinel_falco.sh
+
+sudo chmod +x install_sentinel_falco.sh   
+sudo ./install_sentinel_falco.sh          #  DETECTION_MODE
+
+-----------------
 if desire to activate isolation
 sudo ./install_sentinel_falco.sh --enforce
 
+======================================================
+SIMPLE TESTING
+======================================================
 execute test 
    docker run -d --name victim -v /:/host alpine sleep 3600
    docker exec victim cat /host/etc/hostname
@@ -14,5 +40,7 @@ execute test
 
    sudo systemctl restart falco-guard
 
+======================================================
 To check the logs 
+======================================================
 journalctl -u falco-guard -f
