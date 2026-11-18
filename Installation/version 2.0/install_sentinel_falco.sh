@@ -137,7 +137,7 @@ say "VALIDATED" "${GREEN}Docker is installed and functional.${NC}"
 #Verifies if falco is installed, if its install then just skips and goes to the next one
 say "Step 4 of 7" "${BLUE}Installing Falco (official repository)${NC}"
 if ! command -v falco >/dev/null; then
-  install -d -m 0755 /etc/apt/keyrings   # 755 on purpose: apt reads it as user _apt (mkdir would give 700 under umask 077)
+  install -d -m 0755 /etc/apt/keyrings 
   curl -fsSL https://falco.org/repo/falcosecurity-packages.asc | gpg --dearmor --yes -o "$APT_KEYRING"
   chmod 644 "$APT_KEYRING"   # apt verifies it as user _apt: it must be world-readable (umask is 077)
   echo "deb [signed-by=$APT_KEYRING] https://download.falco.org/packages/deb stable main" > /etc/apt/sources.list.d/falcosecurity.list
@@ -151,7 +151,7 @@ say "Step 5 of 7" "${BLUE}Deploying Sentinel_Falco in $INSTALL_DIR${NC}"
 #creates directories: alert, policies, information of containers isolated,falco configuration
 #prepare dependencies to deploy the rules
 mkdir -p "$INSTALL_DIR/guard" "$INSTALL_DIR/config" /etc/falco/rules.d /etc/falco/config.d
-install -d -m 700 "$DATA_DIR" "$COLLECT_INFO"   # private: alerts, state and evidence snapshots
+install -d -m 700 "$DATA_DIR" "$COLLECT_INFO"   # The data collectec is sensitive so to avoid any security risk of leaking data the information has to be protected
 touch "$INSTALL_DIR/guard/__init__.py"
 cat > "$INSTALL_DIR/guard/policy.py" <<'__GUARD_EOF__'
 """Decision mechanism: ignore, alert or isolate?"""
