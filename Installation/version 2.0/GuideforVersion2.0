@@ -36,9 +36,12 @@ SIMPLE TESTING
 execute test 
    docker run -d --name victim -v /:/host alpine sleep 3600
    docker exec victim cat /host/etc/hostname
-   tail -n 3 /var/lib/Sentinel_Falco/alerts.jsonl
+  sudo tail -n 3 /var/lib/Sentinel_Falco/alerts.jsonl
 
-   sudo systemctl restart falco-guard
+======================================
+IF FALCO IS DOWN
+======================================
+sudo systemctl restart falco-guard
 
 ======================================================
 To check the logs 
