@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #==============================================================================
-# Supported systems: Ubuntu from version >=22.04 , Debian 12+, Kali Linux
+# Supported OS: Ubuntu from version >=22.04 , Debian 12+, Kali Linux
 # Requirements: systemd, kernel >= 5.8 with BTF, Python >= 3.10, Docker.
 #   sudo ./install_sentinel_falco.sh [--enforce] [--port N] because in KALI the default port can be already used 
 #Bash shell option that changes pipeline behaviour so the pipeline fails if any command in the chain fails.
@@ -52,6 +52,7 @@ FALCO_CONFIG=/etc/falco/config.d/configfalco.yaml
 FALCO_RULES=/etc/falco/rules.d/rules_detection_falco.yaml
 POLICY_NAME=policy_rules_defined.yaml
 APT_KEYRING=/etc/apt/keyrings/verify_repo_install.gpg
+NOTIFY_SCRIPT=/usr/local/bin/sentinel-notify.sh
 
 say() { echo -e "\033[0;34m[${1:-INFO}]\033[0m ${2:-}"; }
 die() { echo -e "\033[0;31m[!] $1\033[0m" >&2; exit 1; }
@@ -107,7 +108,8 @@ fi
 say "Step 2 of 7" "${BLUE}Installing dependencies${NC}"
 command -v apt-get >/dev/null || die "${RED}CRITICAL: This installer only supports Debian/Ubuntu (apt)."
 apt-get update -qq
-$APT ca-certificates curl gnupg openssl python3 python3-venv
+# jq is needed by the notification service (sentinel-notify)
+$APT ca-certificates curl gnupg openssl python3 python3-venv jq
 python3 -c 'import sys; sys.exit(0 if sys.version_info >= (3,10) else 1)' || die "${YELLOW}Python >= 3.10 is required (you have $(python3 -V))."
 
 #----------------------------------------
@@ -434,10 +436,12 @@ cat > "$FALCO_RULES" <<'__GUARD_EOF__'
   condition: (evt.type in (execve, execveat))
 - macro: guard_trusted
   condition: (container.image.repository in (falcosecurity/falco, falco-guard))
-# Container startup: runc opens the rootfs at /var/lib/docker/rootfs/overlayfs/ (noise, not an attack).
+# Container startup: runc opens the container rootfs while creating it (noise, not an attack).
+# Depending on the Docker storage driver the path is /var/lib/docker/rootfs/overlayfs/ (containerd snapshotter)
+# or /var/lib/docker/overlay2/ (classic overlay2 driver).
 # Narrow exception: only that process+path pair. The rest of /var/lib/docker/ remains monitored.
 - macro: guard_runc_startup
-  condition: (proc.name startswith "runc:" and fd.name startswith /var/lib/docker/rootfs/overlayfs/)
+  condition: (proc.name startswith "runc:" and (fd.name startswith /var/lib/docker/rootfs/overlayfs/ or fd.name startswith /var/lib/docker/overlay2/))
 
 - rule: Host Filesystem non Authorized
   desc: A container opens files from host paths (bind mounts of /, /proc/1/root, runtime dirs)
@@ -510,6 +514,50 @@ python3 -m venv "$INSTALL_DIR/venv"
 "$INSTALL_DIR/venv/bin/pip" install -q "fastapi==0.115.*" "uvicorn[standard]==0.32.*" "docker==7.1.*" "PyYAML==6.0.*" "requests==2.32.*"
 
 #---------------------------------------------------------------
+# Live terminal notifications: watches alerts.jsonl and broadcasts a message (wall) to every open terminal.
+# Cooldown: the same rule + container only notifies once every COOLDOWN seconds (alerts.jsonl still logs everything).
+cat > "$NOTIFY_SCRIPT" <<'__NOTIFY_EOF__'
+#!/usr/bin/env bash
+# Sentinel_Falco: broadcast a terminal alert (wall) for every new alert, with cooldown
+ALERTS=/var/lib/Sentinel_Falco/alerts.jsonl
+COOLDOWN=60        # seconds before the same rule+container can notify again
+clean() { printf '%s' "$1" | tr -cd '[:print:]' | cut -c1-200; }   # strips control characters coming from the container
+
+declare -A last
+
+tail -n0 -F "$ALERTS" 2>/dev/null | while read -r line; do
+  rule=$(clean "$(jq -r '.rule // "?"' <<<"$line")")
+  cont=$(clean "$(jq -r '.container // "?"' <<<"$line")")
+  dec=$(clean "$(jq -r '.decision // "?"' <<<"$line")")
+  det=$(clean "$(jq -r '.file // .cmd // ""' <<<"$line")")
+
+  key="$rule|$cont"
+  now=$(printf '%(%s)T' -1)
+  if (( now - ${last[$key]:-0} < COOLDOWN )); then continue; fi
+  last[$key]=$now
+
+  wall "SENTINEL ALERT: $rule
+Container: $cont | Action: $dec
+Details: $det"
+done
+__NOTIFY_EOF__
+chmod 755 "$NOTIFY_SCRIPT"
+
+cat > /etc/systemd/system/sentinel-notify.service <<'EOC'
+[Unit]
+Description=Sentinel_Falco: live terminal notifications
+After=falco-guard.service
+
+[Service]
+ExecStart=/usr/local/bin/sentinel-notify.sh
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target
+EOC
+
+#---------------------------------------------------------------
 say "Step 6 of 7" "${BLUE}Configuring token and Falco HTTP output${NC}"
 
 # Keep an existing valid token, otherwise generate one
@@ -577,6 +625,8 @@ fi
 systemctl daemon-reload
 systemctl enable falco-guard.service
 systemctl restart falco-guard.service               # guard first... (restart also applies new code/port on a reinstall)
+systemctl enable sentinel-notify.service
+systemctl restart sentinel-notify.service           # live terminal notifications
 systemctl disable --now falco-kmod.service falco-bpf.service 2>/dev/null || true
 systemctl enable falco-modern-bpf.service
 systemctl restart falco-modern-bpf.service           # ...then Falco
@@ -585,6 +635,7 @@ for i in {1..15}; do curl -fs "http://127.0.0.1:$PORT/health" >/dev/null && brea
 curl -fs "http://127.0.0.1:$PORT/health" || die "${RED}The guard is not responding: journalctl -u falco-guard -n 30"
 echo
 systemctl is-active --quiet falco-modern-bpf || die "${RED}Falco could not start: journalctl -u falco-modern-bpf -n 30"
+systemctl is-active --quiet sentinel-notify || die "${RED}The notification service is not running: journalctl -u sentinel-notify -n 30"
 
 cat <<EOM
 
@@ -592,5 +643,6 @@ cat <<EOM
  Sentinel_Falco installed. Mode: $([[ $DETECTION == true ]] && echo "DETECTION_MODE (detects and alerts only, no isolation)" || echo "ENFORCE (real isolation)")
 =============================================================================================================================
 API:        http://127.0.0.1:$PORT   (token saved in /etc/falco-guard.env)
-Logs:       journalctl -u falco-guard -f   |   journalctl -u falco-modern-bpf -f
+Alerts:     tail -f /var/lib/Sentinel_Falco/alerts.jsonl   (live terminal alerts are broadcast automatically)
+Logs:       journalctl -u falco-guard -f   |   journalctl -u falco-modern-bpf -f   |   journalctl -u sentinel-notify -f
 EOM
