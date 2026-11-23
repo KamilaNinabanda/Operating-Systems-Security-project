@@ -5,6 +5,8 @@
 #   sudo ./install_sentinel_falco.sh [--enforce] [--port N] because in KALI the default port can be already used 
 #Bash shell option that changes pipeline behaviour so the pipeline fails if any command in the chain fails.
 set -euo pipefail
+#user file-creation mode mask: subtracts permissions from the base permissions when a new file or directory is created. 
+#This is because when we collect logs, we keep private information and we do not want everybody can read it. 
 umask 077
 #Colors to alerts or any warning during the installation
 RED='\033[0;31m'
@@ -14,7 +16,7 @@ YELLOW='\033[1;33m'
 CYAN='\033[0;36m'
 NC='\033[0m'
 
-# --- EXTRA INFO 
+# --- INFO 
 #   --enforce   real isolation (default: detection mode = detect and alert only)
 #   --port N    port of the local API (default 8080, or the one used by a previous install)
 valid_port() { [[ "$1" =~ ^[0-9]+$ ]] && (( 10#$1 >= 1024 && 10#$1 <= 65535 )); }
@@ -34,7 +36,7 @@ done
 if [[ -n "$PORT_FLAG" ]] && ! valid_port "$PORT_FLAG"; then
   echo -e "${RED}[!] Invalid port '$PORT_FLAG' (use a number between 1024 and 65535).${NC}" >&2; exit 1
 fi
-# --- end arguments ---
+# ------
 
 #It verifies that we execute with sudo because the program edit and create files. 
 [[ $EUID -eq 0 ]] || { echo -e "${RED}[!] Execute as root with sudo.${NC}"; exit 1; }
@@ -45,28 +47,28 @@ export FALCO_FRONTEND=noninteractive FALCO_DRIVER_CHOICE=modern_ebpf
 APT="apt-get install -y -qq -o Dpkg::Options::=--force-confold"
 
 # --- Paths ---
-INSTALL_DIR=/opt/Sentinel_Falco
-DATA_DIR=/var/lib/Sentinel_Falco
-COLLECT_INFO="$DATA_DIR/AUDIT"
-FALCO_CONFIG=/etc/falco/config.d/configfalco.yaml
-FALCO_RULES=/etc/falco/rules.d/rules_detection_falco.yaml
-POLICY_NAME=policy_rules_defined.yaml
-APT_KEYRING=/etc/apt/keyrings/verify_repo_install.gpg
-NOTIFY_SCRIPT=/usr/local/bin/sentinel-notify.sh
+INSTALL_DIR=/opt/Sentinel_Falco #main directory 
+DATA_DIR=/var/lib/Sentinel_Falco #where alert and state.json is. has the system state, hence the permissions are 700
+COLLECT_INFO="$DATA_DIR/AUDIT" #It has all the data collected from the container before the isolation starts
+FALCO_CONFIG=/etc/falco/config.d/configfalco.yaml # set the we are using the EBPF and handles the TOKEN  
+FALCO_RULES=/etc/falco/rules.d/rules_detection_falco.yaml #personalized FALCO Rules (conditions for detection)
+POLICY_NAME=policy_rules_defined.yaml #Where the action rules will be
+APT_KEYRING=/etc/apt/keyrings/verify_repo_install.gpg #verify authenticity whe we install falco
+NOTIFY_SCRIPT=/usr/local/bin/sentinel-notify.sh # to see an alert when something of the rules triggers it
 
 say() { echo -e "\033[0;34m[${1:-INFO}]\033[0m ${2:-}"; }
 die() { echo -e "\033[0;31m[!] $1\033[0m" >&2; exit 1; }
 
-# --- OS detection ---
+# --- OS validation ---
 OS_ID="$( . /etc/os-release 2>/dev/null && echo "${ID:-unknown}" || echo unknown )"
 OS_LIKE="$( . /etc/os-release 2>/dev/null && echo "${ID_LIKE:-}" || true )"
 OS_NAME="$( . /etc/os-release 2>/dev/null && echo "${PRETTY_NAME:-$OS_ID}" || echo "$OS_ID" )"
 OS_VERSION="$( . /etc/os-release 2>/dev/null && echo "${VERSION_ID:-0}" || echo 0 )"
 case " $OS_ID $OS_LIKE " in
   *" ubuntu "*|*" debian "*|*" kali "*) ;;
-  *) die "${RED}Unsupported distribution: $OS_NAME. Supported: Ubuntu, Debian and Kali Linux (or another apt-based derivative).${NC}" ;;
+  *) die "${RED}Unsupported distribution: $OS_NAME. Supported: Ubuntu, Debian and Kali Linux (or apt-based distribution).${NC}" ;;
 esac
-# Ubuntu: 22.04 or newer (Python < 3.10 is not valid)
+# Ubuntu: 22.04 or newer (Python should be >= 3.10. Less is not valid)
 if [[ "$OS_ID" == "ubuntu" ]]; then
   [[ "$OS_VERSION" =~ ^[0-9]+(\.[0-9]+)?$ ]] || OS_VERSION=0
   IFS=. read -r _maj _min <<< "$OS_VERSION"
@@ -76,12 +78,13 @@ if [[ "$OS_ID" == "ubuntu" ]]; then
 fi
 IS_KALI=false
 if [[ "$OS_ID" == "kali" ]]; then IS_KALI=true; fi
-# --- end OS detection ---
+# --- Section of OS detection ENDS ---
 
 #DIE: shows a message with the error and stops the intallation
 say "Step 1 of 7" "${BLUE} Validating system, kernel, systemd and port${NC}"
 if $IS_KALI; then say "KALI" "${CYAN}Kali Linux was detected: $OS_NAME${NC}"; fi
 
+#we need to verify BTF AND SYSTEMD is up
 WSL_NOTE=""
 if grep -qi microsoft /proc/version 2>/dev/null; then
   WSL_NOTE=" WSL detected: the default WSL kernel often has no BTF and needs systemd enabled ([boot] systemd=true in /etc/wsl.conf)."
@@ -107,8 +110,8 @@ fi
 
 say "Step 2 of 7" "${BLUE}Installing dependencies${NC}"
 command -v apt-get >/dev/null || die "${RED}CRITICAL: This installer only supports Debian/Ubuntu (apt)."
-apt-get update -qq
-# jq is needed by the notification service (sentinel-notify)
+apt-get update -qq #silent installation
+# JQ: used to process, filter, and extract data from JSON files or streams (for the notifications)
 $APT ca-certificates curl gnupg openssl python3 python3-venv jq
 python3 -c 'import sys; sys.exit(0 if sys.version_info >= (3,10) else 1)' || die "${YELLOW}Python >= 3.10 is required (you have $(python3 -V))."
 
@@ -141,7 +144,7 @@ say "Step 4 of 7" "${BLUE}Installing Falco (official repository)${NC}"
 if ! command -v falco >/dev/null; then
   install -d -m 0755 /etc/apt/keyrings 
   curl -fsSL https://falco.org/repo/falcosecurity-packages.asc | gpg --dearmor --yes -o "$APT_KEYRING"
-  chmod 644 "$APT_KEYRING"   # apt verifies it as user _apt: it must be world-readable (umask is 077)
+  chmod 644 "$APT_KEYRING"   # apt verifies it as user _apt: it must be readable (umask is 077)
   echo "deb [signed-by=$APT_KEYRING] https://download.falco.org/packages/deb stable main" > /etc/apt/sources.list.d/falcosecurity.list
   chmod 644 /etc/apt/sources.list.d/falcosecurity.list
   apt-get update -qq
@@ -153,7 +156,7 @@ say "Step 5 of 7" "${BLUE}Deploying Sentinel_Falco in $INSTALL_DIR${NC}"
 #creates directories: alert, policies, information of containers isolated,falco configuration
 #prepare dependencies to deploy the rules
 mkdir -p "$INSTALL_DIR/guard" "$INSTALL_DIR/config" /etc/falco/rules.d /etc/falco/config.d
-install -d -m 700 "$DATA_DIR" "$COLLECT_INFO"   # The data collectec is sensitive so to avoid any security risk of leaking data the information has to be protected
+install -d -m 700 "$DATA_DIR" "$COLLECT_INFO"   # The data collected is sensitive so to avoid any security risk of leaking data the information has to be protected
 touch "$INSTALL_DIR/guard/__init__.py"
 cat > "$INSTALL_DIR/guard/policy.py" <<'__GUARD_EOF__'
 """Decision mechanism: ignore, alert or isolate?"""
