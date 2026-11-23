@@ -239,7 +239,7 @@ class ContainerIsolation:
         return self._find(cid) is not None
 
     def _gatherInfo(self, c) -> str:
-        """Snapshot of the container about to be isolated; Env values are redacted (they may hold secrets)."""
+        """Snapshot of the container before it is isolated; saving the result to a JSON file with restricted permissions."""
         attrs = json.loads(json.dumps(c.attrs))
         attrs["Config"]["Env"] = [e.split("=", 1)[0] + "=<not for reading>" for e in attrs["Config"].get("Env") or []]
         collectedinfo = {"inspect": attrs, "fs_diff": c.diff()}
