@@ -44,6 +44,7 @@ class ContainerIsolation:
     def _gatherInfo(self, c) -> str:
         """Snapshot of the container before it is isolated; saving the result to a JSON file with restricted permissions."""
         attrs = json.loads(json.dumps(c.attrs))
+        #gathers the ENV environmental variables. is the pair of variable and result like password=132 with this, the 132 will turn into not for reading
         attrs["Config"]["Env"] = [e.split("=", 1)[0] + "=<not for reading>" for e in attrs["Config"].get("Env") or []]
         collectedinfo = {"inspect": attrs, "fs_diff": c.diff()}
         if c.status == "running":
@@ -57,6 +58,7 @@ class ContainerIsolation:
 
     def isolate(self, cid: str, reason: str) -> dict:
         with self._lock:
+            #avoid isolating twice avoid corruption
             if self.is_isolated(cid):
                 return {"status": "already_isolated"}
             c = self.client.containers.get(cid)
