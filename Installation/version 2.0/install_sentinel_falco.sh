@@ -1,12 +1,8 @@
 #!/usr/bin/env bash
-#==============================================================================
-# Sentinel_Falco installer
-# Supported OS: Ubuntu >= 22.04, Debian 12+, Kali Linux
-# Requirements: systemd, kernel >= 5.8 with BTF, Python >= 3.10, Docker, Falco >= 0.38
-#==============================================================================
+
 # The pipeline fails if any command in it fails; unset variables are errors.
 set -euo pipefail
-# New files are private by default: the collected evidence contains sensitive data.
+# The files will be private: the info collected  contains sensitive data.
 umask 077
 
 RED='\033[0;31m'
@@ -52,7 +48,7 @@ MIN_FALCO="0.38"
 RETENTION_DAYS=30
 INSTALL_DIR=/opt/Sentinel_Falco
 DATA_DIR=/var/lib/Sentinel_Falco                 # alerts, state, evidence (700)
-COLLECT_INFO="$DATA_DIR/AUDIT"                   # forensic snapshots taken on isolation
+COLLECT_INFO="$DATA_DIR/AUDIT"                   # snapshots taken on isolation
 BACKUP_DIR="$DATA_DIR/backup"                    # previous versions of the Falco rules
 FALCO_CONFIG=/etc/falco/config.d/configfalco.yaml
 FALCO_RULES=/etc/falco/rules.d/rules_detection_falco.yaml
@@ -194,14 +190,6 @@ if ! command -v falco >/dev/null; then
   else
     install -d -m 0755 /etc/apt/keyrings
     curl -fsSL https://falco.org/repo/falcosecurity-packages.asc -o "$TMP_DIR/falco.asc"
-    if [[ -n "${FALCO_GPG_FPR:-}" ]]; then
-      GOT_FPR="$(gpg --show-keys --with-colons "$TMP_DIR/falco.asc" 2>/dev/null | awk -F: '/^fpr:/{print $10; exit}')"
-      WANT_FPR="$(printf '%s' "$FALCO_GPG_FPR" | tr -d ' ' | tr '[:lower:]' '[:upper:]')"
-      [[ "${GOT_FPR^^}" == "$WANT_FPR" ]] || die "Falco repository key fingerprint mismatch (got '${GOT_FPR:-none}'). Aborting."
-      ok "Falco repository key fingerprint verified."
-    else
-      warn "Falco key downloaded over TLS only. Set FALCO_GPG_FPR=<fingerprint> to pin it."
-    fi
     gpg --batch --dearmor --yes -o "$APT_KEYRING" "$TMP_DIR/falco.asc"
     chmod 644 "$APT_KEYRING"   # apt reads it as user _apt (umask is 077)
     echo "deb [signed-by=$APT_KEYRING] https://download.falco.org/packages/deb stable main" > "$APT_LIST"
@@ -934,7 +922,7 @@ say "Step 7 of 8" "${BLUE}Configuring token, Falco output, notifications and ser
 TOKEN="$(sed -n 's/^GUARD_TOKEN=//p' "$ENV_FILE" 2>/dev/null | head -n 1 || true)"
 [[ "$TOKEN" =~ ^[[:xdigit:]]{48,128}$ ]] || TOKEN="$(openssl rand -hex 32)"
 
-# Rewrite the env file atomically (mktemp creates it 600), keeping other variables such as SLACK_WEBHOOK_URL.
+# Rewrite the env file atomically, keeping other variables such as SLACK_WEBHOOK_URL.
 TMP_ENV="$(mktemp "$ENV_FILE.XXXXXX")"
 {
   grep -v -E '^(GUARD_TOKEN|GUARD_DETECTION_MODE|GUARD_PORT)=' "$ENV_FILE" 2>/dev/null || true
@@ -1106,7 +1094,4 @@ cat <<EOM
 API:        http://127.0.0.1:$PORT   (token in $ENV_FILE)
 Alerts:     tail -f $DATA_DIR/alerts.jsonl   (live terminal alerts are broadcast automatically)
 Logs:       journalctl -u falco-guard -f | journalctl -u falco-modern-bpf -f | journalctl -u sentinel-notify -f
-Evidence:   $COLLECT_INFO   (purged after $RETENTION_DAYS days)
-Release:    curl -X POST -H "X-Guard-Token: \$TOKEN" http://127.0.0.1:$PORT/release/<name_or_id>
-Check only: sudo $0 --dry-run
 EOM
