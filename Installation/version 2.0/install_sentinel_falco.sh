@@ -3,16 +3,6 @@
 # Sentinel_Falco installer
 # Supported OS: Ubuntu >= 22.04, Debian 12+, Kali Linux
 # Requirements: systemd, kernel >= 5.8 with BTF, Python >= 3.10, Docker, Falco >= 0.38
-#
-#   sudo ./install_sentinel_falco.sh [--enforce | --detect] [--port N] [--dry-run]
-#
-#   --enforce    real isolation of containers
-#   --detect     detection only (detect + alert, never isolate)
-#                (without either flag a reinstall keeps the previous mode; first install = detect)
-#   --port N     local API port (default 8080 or the one used by a previous install;
-#                Burp Suite / ZAP use 8080 on Kali: choose another one, e.g. --port 18080)
-#   --dry-run    run the checks and validate the rules, change nothing
-#   Optional: FALCO_GPG_FPR=<fingerprint> pins the Falco repository key.
 #==============================================================================
 # The pipeline fails if any command in it fails; unset variables are errors.
 set -euo pipefail
