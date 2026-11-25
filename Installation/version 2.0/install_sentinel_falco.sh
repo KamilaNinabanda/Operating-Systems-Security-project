@@ -111,6 +111,7 @@ if [[ "$OS_ID" == "kali" ]]; then IS_KALI=true; fi
 say "Step 1 of 8" "${BLUE}Validating system, kernel, systemd, port and mode${NC}"
 if $IS_KALI; then say "KALI" "${CYAN}Kali Linux detected: $OS_NAME${NC}"; fi
 
+#we need to verify BTF AND SYSTEMD is up
 WSL_NOTE=""
 if grep -qi microsoft /proc/version 2>/dev/null; then
   WSL_NOTE=" WSL detected: the default WSL kernel often has no BTF and needs systemd enabled ([boot] systemd=true in /etc/wsl.conf)."
