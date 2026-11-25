@@ -1,8 +1,20 @@
 #!/usr/bin/env bash
-
+#==============================================================================
+# Sentinel_Falco installer
+# Supported OS: Ubuntu >= 22.04, Debian 12+, Kali Linux
+# Requirements: systemd, kernel >= 5.8 with BTF, Python >= 3.10, Docker, Falco >= 0.38
+#
+#   sudo ./install_sentinel_falco.sh [--enforce | --detect] [--port N]
+#
+#   --enforce    real isolation of containers
+#   --detect     detection only (detect + alert, never isolate)
+#                (without either flag a reinstall keeps the previous mode; first install = detect)
+#   --port N     local API port (default 8080 or the one used by a previous install;
+#                Burp Suite / ZAP use 8080 on Kali: choose another one, e.g. --port 18080)
+#==============================================================================
 # The pipeline fails if any command in it fails; unset variables are errors.
 set -euo pipefail
-# The files will be private: the info collected  contains sensitive data.
+# New files are private by default: the collected evidence contains sensitive data.
 umask 077
 
 RED='\033[0;31m'
@@ -16,17 +28,15 @@ valid_port() { [[ "$1" =~ ^[0-9]+$ ]] && (( 10#$1 >= 1024 && 10#$1 <= 65535 )); 
 
 MODE_FLAG=""
 PORT_FLAG=""
-DRY=false
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --enforce)   MODE_FLAG="enforce" ;;
     --detect)    MODE_FLAG="detect" ;;
-    --dry-run)   DRY=true ;;
     --port)
       [[ -n "${2:-}" ]] || { echo -e "${RED}[!] --port needs a value.${NC}" >&2; exit 1; }
       PORT_FLAG="$2"; shift ;;
     -h|--help)
-      echo "Usage: $0 [--enforce | --detect] [--port N] [--dry-run]"
+      echo "Usage: $0 [--enforce | --detect] [--port N]"
       exit 0 ;;
     *) echo -e "${RED}[!] Unknown option: $1${NC}" >&2; exit 1 ;;
   esac
@@ -48,7 +58,7 @@ MIN_FALCO="0.38"
 RETENTION_DAYS=30
 INSTALL_DIR=/opt/Sentinel_Falco
 DATA_DIR=/var/lib/Sentinel_Falco                 # alerts, state, evidence (700)
-COLLECT_INFO="$DATA_DIR/AUDIT"                   # snapshots taken on isolation
+COLLECT_INFO="$DATA_DIR/AUDIT"                   # forensic snapshots taken on isolation
 BACKUP_DIR="$DATA_DIR/backup"                    # previous versions of the Falco rules
 FALCO_CONFIG=/etc/falco/config.d/configfalco.yaml
 FALCO_RULES=/etc/falco/rules.d/rules_detection_falco.yaml
@@ -76,8 +86,6 @@ cleanup() {
   return 0
 }
 trap cleanup EXIT
-
-$DRY && say "DRY-RUN" "${YELLOW}Checks only: nothing will be installed or modified.${NC}"
 
 #==============================================================================
 # Step 1: system validation
@@ -143,12 +151,8 @@ fi
 #==============================================================================
 say "Step 2 of 8" "${BLUE}Installing dependencies${NC}"
 command -v apt-get >/dev/null || die "This installer only supports Debian/Ubuntu (apt)."
-if $DRY; then
-  say "DRY-RUN" "skipping apt-get update/install"
-else
-  apt-get update -qq
-  $APT ca-certificates curl gnupg openssl python3 python3-venv jq
-fi
+apt-get update -qq
+$APT ca-certificates curl gnupg openssl python3 python3-venv jq
 python3 -c 'import sys; sys.exit(0 if sys.version_info >= (3,10) else 1)' \
   || die "Python >= 3.10 is required (you have $(python3 -V 2>&1))."
 
@@ -185,18 +189,14 @@ falco_version() {   # prints MAJOR.MINOR, or nothing if it cannot be determined
 }
 
 if ! command -v falco >/dev/null; then
-  if $DRY; then
-    say "DRY-RUN" "Falco is not installed: it would be installed from the official repository."
-  else
-    install -d -m 0755 /etc/apt/keyrings
-    curl -fsSL https://falco.org/repo/falcosecurity-packages.asc -o "$TMP_DIR/falco.asc"
-    gpg --batch --dearmor --yes -o "$APT_KEYRING" "$TMP_DIR/falco.asc"
-    chmod 644 "$APT_KEYRING"   # apt reads it as user _apt (umask is 077)
-    echo "deb [signed-by=$APT_KEYRING] https://download.falco.org/packages/deb stable main" > "$APT_LIST"
-    chmod 644 "$APT_LIST"
-    apt-get update -qq
-    $APT falco
-  fi
+  install -d -m 0755 /etc/apt/keyrings
+  curl -fsSL https://falco.org/repo/falcosecurity-packages.asc -o "$TMP_DIR/falco.asc"
+  gpg --batch --dearmor --yes -o "$APT_KEYRING" "$TMP_DIR/falco.asc"
+  chmod 644 "$APT_KEYRING"   # apt reads it as user _apt (umask is 077)
+  echo "deb [signed-by=$APT_KEYRING] https://download.falco.org/packages/deb stable main" > "$APT_LIST"
+  chmod 644 "$APT_LIST"
+  apt-get update -qq
+  $APT falco
 fi
 if command -v falco >/dev/null; then
   FVER="$(falco_version || true)"
@@ -388,23 +388,11 @@ if command -v falco >/dev/null; then
     fi
   done
 else
+  # Defensive fallback: Step 4 installs Falco unconditionally, so this should not happen in practice.
   for entry in "${OPTIONAL[@]}"; do ACCEPTED+=("${entry%%:*}"); done
-  warn "Falco is not installed (dry-run): rules were not validated."
+  warn "Falco was not found: rules were not validated against it."
 fi
 cat "${ACCEPTED[@]}" > "$RULES_ALL"
-
-if $DRY; then
-  echo
-  say "DRY-RUN" "All checks passed. A real run would:"
-  cat <<EOP
-  - create $INSTALL_DIR (guard code + venv) and $DATA_DIR (alerts, state, evidence)
-  - install $FALCO_RULES and $FALCO_CONFIG
-  - install /etc/systemd/system/{falco-guard,sentinel-notify,sentinel-cleanup}.{service,timer}
-  - install $NOTIFY_SCRIPT, $CLEANUP_SCRIPT, $LOGROTATE_CONF and $ENV_FILE
-  - mode: $([[ $DETECTION == true ]] && echo detection || echo enforce), port: $PORT
-EOP
-  exit 0
-fi
 
 #==============================================================================
 # Step 6: guard code, virtualenv and policy
@@ -922,7 +910,7 @@ say "Step 7 of 8" "${BLUE}Configuring token, Falco output, notifications and ser
 TOKEN="$(sed -n 's/^GUARD_TOKEN=//p' "$ENV_FILE" 2>/dev/null | head -n 1 || true)"
 [[ "$TOKEN" =~ ^[[:xdigit:]]{48,128}$ ]] || TOKEN="$(openssl rand -hex 32)"
 
-# Rewrite the env file atomically, keeping other variables such as SLACK_WEBHOOK_URL.
+# Rewrite the env file atomically (mktemp creates it 600), keeping other variables such as SLACK_WEBHOOK_URL.
 TMP_ENV="$(mktemp "$ENV_FILE.XXXXXX")"
 {
   grep -v -E '^(GUARD_TOKEN|GUARD_DETECTION_MODE|GUARD_PORT)=' "$ENV_FILE" 2>/dev/null || true
@@ -1094,4 +1082,6 @@ cat <<EOM
 API:        http://127.0.0.1:$PORT   (token in $ENV_FILE)
 Alerts:     tail -f $DATA_DIR/alerts.jsonl   (live terminal alerts are broadcast automatically)
 Logs:       journalctl -u falco-guard -f | journalctl -u falco-modern-bpf -f | journalctl -u sentinel-notify -f
+Evidence:   $COLLECT_INFO   (purged after $RETENTION_DAYS days)
+Release:    curl -X POST -H "X-Guard-Token: \$TOKEN" http://127.0.0.1:$PORT/release/<name_or_id>
 EOM
