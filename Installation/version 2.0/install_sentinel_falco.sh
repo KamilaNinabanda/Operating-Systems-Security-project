@@ -1,20 +1,8 @@
 #!/usr/bin/env bash
-#==============================================================================
-# Sentinel_Falco installer
-# Supported OS: Ubuntu >= 22.04, Debian 12+, Kali Linux
-# Requirements: systemd, kernel >= 5.8 with BTF, Python >= 3.10, Docker, Falco >= 0.38
-#
-#   sudo ./install_sentinel_falco.sh [--enforce | --detect] [--port N]
-#
-#   --enforce    real isolation of containers
-#   --detect     detection only (detect + alert, never isolate)
-#                (without either flag a reinstall keeps the previous mode; first install = detect)
-#   --port N     local API port (default 8080 or the one used by a previous install;
-#                Burp Suite / ZAP use 8080 on Kali: choose another one, e.g. --port 18080)
-#==============================================================================
+
 # The pipeline fails if any command in it fails; unset variables are errors.
 set -euo pipefail
-# New files are private by default: the collected evidence contains sensitive data.
+# New files will become private since we collect sensitive data
 umask 077
 
 RED='\033[0;31m'
@@ -53,12 +41,12 @@ export DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=l
 export FALCO_FRONTEND=noninteractive FALCO_DRIVER_CHOICE=modern_ebpf
 APT="apt-get install -y -qq -o Dpkg::Options::=--force-confold -o Acquire::Retries=3"
 
-# --- Paths ---
+# --- --------
 MIN_FALCO="0.38"
 RETENTION_DAYS=30
 INSTALL_DIR=/opt/Sentinel_Falco
 DATA_DIR=/var/lib/Sentinel_Falco                 # alerts, state, evidence (700)
-COLLECT_INFO="$DATA_DIR/AUDIT"                   # forensic snapshots taken on isolation
+COLLECT_INFO="$DATA_DIR/AUDIT"                   # collect of info before it isolates
 BACKUP_DIR="$DATA_DIR/backup"                    # previous versions of the Falco rules
 FALCO_CONFIG=/etc/falco/config.d/configfalco.yaml
 FALCO_RULES=/etc/falco/rules.d/rules_detection_falco.yaml
@@ -111,7 +99,6 @@ if [[ "$OS_ID" == "kali" ]]; then IS_KALI=true; fi
 say "Step 1 of 8" "${BLUE}Validating system, kernel, systemd, port and mode${NC}"
 if $IS_KALI; then say "KALI" "${CYAN}Kali Linux detected: $OS_NAME${NC}"; fi
 
-#we need to verify BTF AND SYSTEMD is up
 WSL_NOTE=""
 if grep -qi microsoft /proc/version 2>/dev/null; then
   WSL_NOTE=" WSL detected: the default WSL kernel often has no BTF and needs systemd enabled ([boot] systemd=true in /etc/wsl.conf)."
