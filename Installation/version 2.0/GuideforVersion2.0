@@ -25,15 +25,13 @@ create the file with the name: install_sentinel_falco.sh
 
 
 sudo chmod +x install_sentinel_falco.sh   
-sudo ./install_sentinel_falco.sh [--enforce | --detect] [--port N] [--dry-run]
+sudo ./install_sentinel_falco.sh [--enforce | --detect] 
 
    --enforce    real isolation of containers
    --detect     detection only (detect + alert, never isolate)
                 (without either flag a reinstall keeps the previous mode; first install = detect)
    --port N     local API port (default 8080 or the one used by a previous install;
                 Burp Suite / ZAP use 8080 on Kali: choose another one, e.g. --port 18080)
-   --dry-run    run the checks and validate the rules, change nothing
-   Optional: FALCO_GPG_FPR=<fingerprint> pins the Falco repository key.
 -----------------
 if desire to activate isolation
 sudo ./install_sentinel_falco.sh --enforce
@@ -49,7 +47,22 @@ execute test
 ======================================
 IF FALCO IS DOWN
 ======================================
+
 sudo systemctl restart falco-guard
+
+
+
+==================================
+UNINSTALL
+=================================
+
+Removes everything install_sentinel_falco.sh creates: the guard, its 
+virtualenv, the detection rules, the notification/cleanup services, the
+token/config files, logrotate and the evidence/alerts data.
+
+sudo ./uninstall_sentinel_falco.sh --yes
+ --yes           skip the confirmation prompt
+--purge-falco   also remove the falco package, its apt repo and keyring
 
 ======================================================
 To check the logs 
