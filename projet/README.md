@@ -40,7 +40,7 @@ Together they form **defense in depth**: prevention narrows the attack surface, 
 |---|---|
 | [Yasmine] | Attack 2 (AuthZ bypass) + integration |
 | [Keny] | Defense 2 — prevention layer |
-| [Camille] | Defense 1 — detection layer |
+| [Kamilla] | Defense 1 — detection layer |
 | [Carine] | [ Attack 1- runc container escape |
 
 > Academic integrity: all written material is the team's own work.
