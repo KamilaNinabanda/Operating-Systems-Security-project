@@ -1,0 +1,4 @@
+FROM alpine:3.20
+RUN for f in /proc/self/fd/*; do echo "== $f -> $(readlink $f 2>&1)"; done
+WORKDIR /proc/self/fd/8
+RUN ls /proc/self/cwd
