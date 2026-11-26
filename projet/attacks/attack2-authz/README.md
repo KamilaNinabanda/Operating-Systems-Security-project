@@ -1,23 +1,21 @@
-# Attack 2 — Docker AuthZ plugin bypass (CVE-2024-41110 / CVE-2026-34040)
+# Attack 2 — Docker AuthZ bypass (CVE-2026-34040)
 
-> ⚠️ Isolated, network-disconnected VM only.
+An incomplete fix for CVE-2024-41110: Docker's authorization middleware
+silently drops request bodies larger than 1 MB (maxBodySize) before
+forwarding them to the AuthZ plugin — while still processing the full
+body itself. The plugin receives RequestBody: nil and approves what it
+cannot see. A single padded HTTP request creates a PRIVILEGED container
+with host filesystem access.
 
-## Environment
-- Debian 12 (or your tested host)
-- Docker Engine with an authorization plugin enabled (OPA / custom)
-- Target image: alpine:3.20
+The 2024 fix (CVE-2024-41110) added a floor (Content-Length > 0);
+the ceiling (ContentLength < maxBodySize) was left untouched — which is
+the incomplete-fix story: the same middleware failed again, silently.
 
-## What this attack shows
-When the request body sent to the authorization plugin is missing or dropped (an empty body, or a body inflated past an internal size threshold), the plugin approves a request it never fully saw, while the daemon executes the complete request. The result: a privileged container is created despite the policy, leading to host compromise.
+## Files
+- generate_payload.py : builds the padded create request (2 MiB inert field)
+- bypass.sh           : sends the baseline (denied) then the bypass (approved)
+- verify.sh           : shows the container is real, privileged, and compromises the host
 
-## Contents of this folder
-Put your attack-2 materials here:
-- the authorization-plugin config used (fail-open baseline)
-- the reproduction scripts you used
-- the evidence (screenshots, audit lines showing declared vs received body length)
-
-## Snapshot
-`A2-authz-bypass` — taken with the network disconnected, after cleaning up test containers.
-
----
-*See the full written analysis in the attack-2 report. (Placeholder — add the reproduction files and evidence here.)*
+## Prerequisite
+Docker with the team's AuthZ plugin attached (fail-open) — see
+sentinel_docker/prevention/. Baseline: privileged runs must be DENIED.
