@@ -1,0 +1,7 @@
+# Falco output configuration for the detection layer.
+engine:
+  kind: modern_ebpf
+json_output: true          # REQUIRED: the webhook rejects plain-text alerts
+http_output:
+  enabled: true
+  url: "http://127.0.0.1:5000/webhook/falco"
