@@ -54,9 +54,9 @@ POLICY_NAME=policy_rules_defined.yaml                         # reads policy.py 
 APT_KEYRING=/etc/apt/keyrings/verify_repo_install.gpg         # apt requirement to download
 APT_LIST=/etc/apt/sources.list.d/falcosecurity.list           # repository to install
 ENV_FILE=/etc/falco-guard.env                                 # token
-NOTIFY_SCRIPT=/usr/local/bin/sentinel-notify.sh
-CLEANUP_SCRIPT=/usr/local/bin/sentinel-cleanup.sh
-LOGROTATE_CONF=/etc/logrotate.d/sentinel-falco
+NOTIFY_SCRIPT=/usr/local/bin/sentinel-notify.sh               # wall alerts with 60 sec of cooldown
+CLEANUP_SCRIPT=/usr/local/bin/sentinel-cleanup.sh             # deletes old data
+LOGROTATE_CONF=/etc/logrotate.d/sentinel-falco                # compress copies of logs to avoid it grows too much
 
 say()  { echo -e "\033[0;34m[${1:-INFO}]\033[0m ${2:-}"; }
 ok()   { echo -e "${GREEN}[OK]${NC} $1"; }
@@ -84,7 +84,7 @@ OS_NAME="$( . /etc/os-release 2>/dev/null && echo "${PRETTY_NAME:-$OS_ID}" || ec
 OS_VERSION="$( . /etc/os-release 2>/dev/null && echo "${VERSION_ID:-0}" || echo 0 )"
 case " $OS_ID $OS_LIKE " in
   *" ubuntu "*|*" debian "*|*" kali "*) ;;
-  *) die "Unsupported distribution: $OS_NAME. Supported: Ubuntu, Debian and Kali Linux (or apt-based derivative)." ;;
+  *) die "Unsupported distribution: $OS_NAME. Supported: Ubuntu, Debian and Kali Linux (or apt-based)." ;;
 esac
 if [[ "$OS_ID" == "ubuntu" ]]; then
   [[ "$OS_VERSION" =~ ^[0-9]+(\.[0-9]+)?$ ]] || OS_VERSION=0
@@ -98,7 +98,7 @@ if [[ "$OS_ID" == "kali" ]]; then IS_KALI=true; fi
 
 say "Step 1 of 8" "${BLUE}Validating system, kernel, systemd, port and mode${NC}"
 if $IS_KALI; then say "KALI" "${CYAN}Kali Linux detected: $OS_NAME${NC}"; fi
-
+#for deployments with windows 
 WSL_NOTE=""
 if grep -qi microsoft /proc/version 2>/dev/null; then
   WSL_NOTE=" WSL detected: the default WSL kernel often has no BTF and needs systemd enabled ([boot] systemd=true in /etc/wsl.conf)."
@@ -106,7 +106,7 @@ fi
 [[ -f /sys/kernel/btf/vmlinux ]] || die "Missing /sys/kernel/btf/vmlinux: modern_ebpf won't work (kernel $(uname -r)).$WSL_NOTE"
 [[ -d /run/systemd/system ]]    || die "systemd is not running: Sentinel_Falco installs systemd services.$WSL_NOTE"
 
-# Port
+# Port validation 
 OLD_PORT=""
 OLD_MODE=""
 if [[ -f "$ENV_FILE" ]]; then
@@ -131,11 +131,11 @@ case "$MODE_FLAG" in
   *)       if [[ "$OLD_MODE" == "false" ]]; then DETECTION=false; else DETECTION=true; fi ;;
 esac
 if [[ -z "$MODE_FLAG" && -n "$OLD_MODE" ]]; then
-  say "MODE" "Keeping the mode of the previous install ($([[ $DETECTION == true ]] && echo detection || echo enforce))."
+  say "MODE" "Maintain the mode of the previous install ($([[ $DETECTION == true ]] && echo detection || echo enforce))."
 fi
 
 #==============================================================================
-# Step 2: dependencies
+# Step 2: Installation of dependencies 
 #==============================================================================
 say "Step 2 of 8" "${BLUE}Installing dependencies${NC}"
 command -v apt-get >/dev/null || die "This installer only supports Debian/Ubuntu (apt)."
@@ -145,7 +145,7 @@ python3 -c 'import sys; sys.exit(0 if sys.version_info >= (3,10) else 1)' \
   || die "Python >= 3.10 is required (you have $(python3 -V 2>&1))."
 
 #==============================================================================
-# Step 3: Docker
+# Step 3: Validates Docker
 #==============================================================================
 say "Step 3 of 8" "${BLUE}Verifying Docker installation${NC}"
 DOCKER_INSTALL_HINT=""
@@ -162,7 +162,7 @@ docker info >/dev/null 2>&1 || die "Cannot communicate with the Docker daemon. C
 ok "Docker is installed and functional."
 
 #==============================================================================
-# Step 4: Falco (official repository) and version check
+# Step 4: Falco (if needed downloaded from original repo) and version check
 #==============================================================================
 say "Step 4 of 8" "${BLUE}Installing / verifying Falco (>= $MIN_FALCO)${NC}"
 falco_version() {   # prints MAJOR.MINOR, or nothing if it cannot be determined
@@ -180,7 +180,7 @@ if ! command -v falco >/dev/null; then
   install -d -m 0755 /etc/apt/keyrings
   curl -fsSL https://falco.org/repo/falcosecurity-packages.asc -o "$TMP_DIR/falco.asc"
   gpg --batch --dearmor --yes -o "$APT_KEYRING" "$TMP_DIR/falco.asc"
-  chmod 644 "$APT_KEYRING"   # apt reads it as user _apt (umask is 077)
+  chmod 644 "$APT_KEYRING"   # apt reads it as user _apt (umask is 077) 
   echo "deb [signed-by=$APT_KEYRING] https://download.falco.org/packages/deb stable main" > "$APT_LIST"
   chmod 644 "$APT_LIST"
   apt-get update -qq
@@ -212,8 +212,6 @@ cat > "$TMP_DIR/core.yaml" <<'__RULES_EOF__'
 - macro: guard_spawn
   condition: (evt.type in (execve, execveat))
 # Container startup: runc opens the container rootfs while creating it (noise, not an attack).
-# Path depends on the Docker storage driver: containerd snapshotter (rootfs/overlayfs) or classic overlay2.
-# Narrow exception: only that process+path pair. The rest of /var/lib/docker/ stays monitored.
 - macro: guard_runc_startup
   condition: (proc.name startswith "runc:" and (fd.name startswith /var/lib/docker/rootfs/overlayfs/ or fd.name startswith /var/lib/docker/overlay2/))
 
@@ -280,9 +278,7 @@ cat > "$TMP_DIR/core.yaml" <<'__RULES_EOF__'
   tags: [container, shell, guard]
 __RULES_EOF__
 
-# Optional rule: detects the host root (or /etc, /root) bind-mounted into a container, whatever the mount point
-# is called (-v /:/mnt, -v /:/x ...). It relies on the container.mounts field; if this Falco build rejects it,
-# the rule is skipped (the rest of the ruleset is still installed).
+# Optional rule: detects the host root (or /etc, /root) bind-mounted into a container
 cat > "$TMP_DIR/mount.yaml" <<'__RULES_EOF__'
 
 - rule: Sensitive Host Mount
