@@ -19,3 +19,9 @@ the incomplete-fix story: the same middleware failed again, silently.
 ## Prerequisite
 Docker with the team's AuthZ plugin attached (fail-open) — see
 sentinel_docker/prevention/. Baseline: privileged runs must be DENIED.
+
+## Run it
+chmod +x bypass.sh verify.sh
+./bypass.sh
+./verify.sh
+Prerequisite check first: docker info --format '{{.Plugins.Authorization}}' must show [authz] and the baseline must be denied — otherwise the PoC proves nothing.
